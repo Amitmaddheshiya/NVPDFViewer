@@ -1,6 +1,0 @@
-D:/am/code/reactnative/NVPDFViewer/android/app/.cxx/RelWithDebInfo/1l11r4rk/x86_64/CMakeFiles/appmodules.dir
-D:/am/code/reactnative/NVPDFViewer/android/app/.cxx/RelWithDebInfo/1l11r4rk/x86_64/CMakeFiles/edit_cache.dir
-D:/am/code/reactnative/NVPDFViewer/android/app/.cxx/RelWithDebInfo/1l11r4rk/x86_64/CMakeFiles/rebuild_cache.dir
-D:/am/code/reactnative/NVPDFViewer/android/app/.cxx/RelWithDebInfo/1l11r4rk/x86_64/safeareacontext_autolinked_build/CMakeFiles/react_codegen_safeareacontext.dir
-D:/am/code/reactnative/NVPDFViewer/android/app/.cxx/RelWithDebInfo/1l11r4rk/x86_64/safeareacontext_autolinked_build/CMakeFiles/edit_cache.dir
-D:/am/code/reactnative/NVPDFViewer/android/app/.cxx/RelWithDebInfo/1l11r4rk/x86_64/safeareacontext_autolinked_build/CMakeFiles/rebuild_cache.dir

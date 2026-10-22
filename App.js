@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Alert,
   BackHandler,
+  DeviceEventEmitter,
   Image,
   NativeModules,
   StyleSheet,
@@ -47,6 +48,48 @@ function App() {
     return () => backHandler.remove();
   }, [cleanMode, pdfUri]);
 
+  // Some Android TV launchers move native focus without reliably forwarding
+  // onFocus to JavaScript. This keeps the visible focus marker in sync with
+  // Left/Right presses from the remote.
+  useEffect(() => {
+    if (!pdfUri || cleanMode) {
+      return undefined;
+    }
+
+    const availableControls = [
+      ...(page > 0 ? ['previous'] : []),
+      ...(page < pageCount - 1 ? ['next'] : []),
+      'rotate',
+      'fullscreen',
+      'exit',
+    ];
+
+    if (!availableControls.includes(focusedControl)) {
+      setFocusedControl(availableControls[0] || null);
+    }
+
+    const subscription = DeviceEventEmitter.addListener('onHWKeyEvent', (event) => {
+      if (Number(event?.eventKeyAction) !== 0) {
+        return;
+      }
+
+      const direction = event?.eventType;
+      if (direction !== 'left' && direction !== 'right') {
+        return;
+      }
+
+      setFocusedControl((current) => {
+        const currentIndex = Math.max(0, availableControls.indexOf(current));
+        const nextIndex = direction === 'left'
+          ? Math.max(0, currentIndex - 1)
+          : Math.min(availableControls.length - 1, currentIndex + 1);
+        return availableControls[nextIndex] || current;
+      });
+    });
+
+    return () => subscription.remove();
+  }, [cleanMode, focusedControl, page, pageCount, pdfUri]);
+
   const renderPage = async (pageIndex, pageRotation = rotation) => {
     setLoading(true);
     try {
@@ -71,6 +114,7 @@ function App() {
       const document = await PDFRendererModule.openDocument(uri);
       setPdfUri(uri);
       setPageCount(document.pageCount);
+      setFocusedControl(document.pageCount > 1 ? 'next' : 'rotate');
       setRotation(0);
       setCleanMode(false);
       await renderPage(0);
@@ -87,7 +131,7 @@ function App() {
     const viewerButton = (id, label, onPress, disabled = false) => (
       <TouchableOpacity
         key={id}
-        hasTVPreferredFocus={id === (page === 0 ? 'next' : 'previous')}
+        hasTVPreferredFocus={id === focusedControl}
         accessible={true}
         accessibilityLabel={label}
         focusable={!disabled}
@@ -98,7 +142,6 @@ function App() {
           disabled && styles.controlDisabled,
         ]}
         onFocus={() => setFocusedControl(id)}
-        onBlur={() => setFocusedControl((current) => current === id ? null : current)}
         onPress={onPress}>
         <Text style={styles.controlText}>{label}</Text>
       </TouchableOpacity>
@@ -128,7 +171,11 @@ function App() {
           {loading ? <ActivityIndicator size="large" color="#fff" /> : null}
           {pageImage && !loading ? <Image source={{ uri: pageImage }} style={styles.pdfImage} resizeMode="stretch" /> : null}
         </View>
-        <View style={styles.controls}>
+        <View style={styles.controlPanel}>
+          <Text style={styles.focusHint}>
+            Remote focus: {focusedControl ? focusedControl.toUpperCase() : 'CONTROLS'}
+          </Text>
+          <View style={styles.controls}>
           {viewerButton('previous', '‹  Previous', () => renderPage(page - 1), page === 0)}
           {viewerButton('next', 'Next  ›', () => renderPage(page + 1), page >= pageCount - 1)}
           {viewerButton('rotate', `↻  Rotate ${rotation}°`, () => {
@@ -138,6 +185,7 @@ function App() {
           })}
           {viewerButton('fullscreen', '⛶  Full screen', () => setCleanMode(true))}
           {viewerButton('exit', 'Exit', () => BackHandler.exitApp())}
+          </View>
         </View>
       </View>
     );
@@ -207,8 +255,10 @@ const styles = StyleSheet.create({
   pageInfo: { color: '#ddd', fontSize: 20, marginLeft: 24 },
   viewer: { flex: 1, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   pdfImage: { width: '100%', height: '100%' },
-  controls: { flexDirection: 'row', justifyContent: 'center', padding: 20, gap: 16, backgroundColor: '#202020' },
-  control: { backgroundColor: '#303030', borderRadius: 8, paddingVertical: 16, paddingHorizontal: 22, borderWidth: 3, borderColor: '#303030' },
+  controlPanel: { paddingTop: 10, paddingBottom: 20, backgroundColor: '#202020' },
+  focusHint: { color: '#FFD600', fontSize: 16, fontWeight: '800', textAlign: 'center', marginBottom: 10, letterSpacing: 1 },
+  controls: { flexDirection: 'row', justifyContent: 'center', gap: 16 },
+  control: { minWidth: 148, alignItems: 'center', backgroundColor: '#303030', borderRadius: 8, paddingVertical: 16, paddingHorizontal: 22, borderWidth: 4, borderColor: '#575757' },
   controlFocused: {
     backgroundColor: '#0D6EFD',
     borderColor: '#FFD600',
