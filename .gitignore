@@ -1,0 +1,40 @@
+# JavaScript dependencies
+node_modules/
+
+# React Native / Metro
+.metro-health-check*
+*.metro-cache
+
+# Android build outputs and local configuration
+android/.gradle/
+android/build/
+android/app/build/
+android/app/.cxx/
+android/local.properties
+*.apk
+*.aab
+*.ap_
+*.keystore
+!android/app/debug.keystore
+
+# IDE and OS files
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Logs and reports
+*.log
+crash_log.txt
+coverage/
+
+# Environment files and secrets
+.env
+.env.*
+!.env.example
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
