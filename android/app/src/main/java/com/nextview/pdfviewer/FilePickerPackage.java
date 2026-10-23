@@ -13,7 +13,7 @@ public class FilePickerPackage implements ReactPackage {
 
     @Override
     public List<ViewManager> createViewManagers(ReactApplicationContext reactContext) {
-        return Collections.emptyList();
+        return Collections.singletonList(new AdsVideoViewManager());
     }
 
     @Override

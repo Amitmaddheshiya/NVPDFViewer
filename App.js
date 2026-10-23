@@ -15,10 +15,12 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  requireNativeComponent,
 } from 'react-native';
 
 const { FilePickerModule, PDFRendererModule, CmsServerModule } = NativeModules;
 const TIMER_VALUES = [5, 10, 15, 30, 60];
+const AdsVideoView = requireNativeComponent('AdsVideoView');
 const fileNameFromUri = (uri) => decodeURIComponent(uri.split('/').pop() || 'PDF document');
 
 function App() {
@@ -40,10 +42,20 @@ function App() {
   const [appPassword, setAppPassword] = useState('');
   const [appAuthenticated, setAppAuthenticated] = useState(false);
   const [loginError, setLoginError] = useState('');
+  const [homeFocused, setHomeFocused] = useState('pdf');
+  const [adsPlaylist, setAdsPlaylist] = useState([]);
+  const [adsActive, setAdsActive] = useState(false);
+  const [adsIndex, setAdsIndex] = useState(0);
+  const [adsImage, setAdsImage] = useState(null);
+  const [adsPdfPage, setAdsPdfPage] = useState(0);
+  const [adsPdfPageCount, setAdsPdfPageCount] = useState(0);
+  const [adsSeconds, setAdsSeconds] = useState(10);
+  const [adsAutoSuppressed, setAdsAutoSuppressed] = useState(false);
   const nextSlideRef = useRef(null);
   const loadDocumentRef = useRef(null);
   const cmsCommandRef = useRef(null);
   const cmsPollBusyRef = useRef(false);
+  const adsNextRef = useRef(null);
   // A CMS command is sent through the native event channel immediately and is
   // also left in the native queue as a delivery fallback. Remember its id so
   // the fallback cannot execute the same action a second time.
@@ -64,10 +76,23 @@ function App() {
     setFocusedControl(null);
   };
 
+  const stopAds = async (manual = true) => {
+    if (manual) setAdsAutoSuppressed(true);
+    setAdsActive(false);
+    setAdsImage(null);
+    setAdsPdfPage(0);
+    setAdsPdfPageCount(0);
+    await PDFRendererModule?.closeDocument?.().catch(() => {});
+  };
+
   useEffect(() => {
     const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
       if (cleanMode) {
         setCleanMode(false);
+        return true;
+      }
+      if (adsActive) {
+        stopAds();
         return true;
       }
       if (pdfUri) {
@@ -78,7 +103,7 @@ function App() {
       return true;
     });
     return () => backHandler.remove();
-  }, [cleanMode, pdfUri]);
+  }, [adsActive, cleanMode, pdfUri]);
 
   // Every library item points to app-private storage, so it survives source
   // picker permissions, app restarts, and TV reboots.
@@ -121,6 +146,50 @@ function App() {
   useEffect(() => {
     CmsServerModule?.getCmsQrCode?.().then((result) => setCmsQr(result)).catch(() => {});
   }, []);
+
+  // TV file-picker apps are often absent. Ask once for Android's official
+  // storage permission page; after owner approval the native scanner can read
+  // /storage/<USB-VOLUME>/Ads directly.
+  useEffect(() => {
+    FilePickerModule?.requestUsbAdsAccess?.().catch(() => {});
+  }, []);
+
+  // USB insertion is not delivered reliably by every Android TV launcher.
+  // A short foreground rescan is the portable fallback: a newly inserted
+  // pendrive begins playback without the owner opening a picker.
+  useEffect(() => {
+    if (!appAuthenticated || adsActive || adsAutoSuppressed || !FilePickerModule?.scanAdsFolder) return undefined;
+    let cancelled = false;
+    const scan = async () => {
+      try {
+        const files = await FilePickerModule.scanAdsFolder();
+        if (!cancelled && files?.length) await startAds(files);
+      } catch (_) { /* Pendrive/Ads folder not present yet. */ }
+    };
+    scan();
+    const interval = setInterval(scan, 3000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [adsActive, adsAutoSuppressed, appAuthenticated]);
+
+  // Immediate USB mount/unmount signal from Android. The 2-second settle time
+  // lets slower TV firmware finish mounting before we ask for the Ads files;
+  // the interval above remains the recovery path if a launcher suppresses the
+  // broadcast.
+  useEffect(() => {
+    const subscription = DeviceEventEmitter.addListener('usbAdsStorageChanged', () => {
+      if (!appAuthenticated || adsAutoSuppressed) return;
+      setTimeout(async () => {
+        try {
+          const files = await FilePickerModule?.scanAdsFolder?.();
+          if (files?.length) await startAds(files);
+          else if (adsActive) await stopAds(false);
+        } catch (_) {
+          if (adsActive) stopAds(false);
+        }
+      }, 2000);
+    });
+    return () => subscription.remove();
+  }, [adsActive, adsAutoSuppressed, appAuthenticated]);
 
   const renderPage = async (pageIndex, pageRotation = rotation) => {
     setLoading(true);
@@ -260,6 +329,80 @@ function App() {
     setFocusedControl(null);
   };
 
+  const showAd = async (index, source = adsPlaylist) => {
+    if (!source.length) throw new Error('No supported files were found in the USB Ads folder.');
+    const safeIndex = ((index % source.length) + source.length) % source.length;
+    const item = source[safeIndex];
+    setAdsIndex(safeIndex);
+    setAdsImage(null);
+    setAdsPdfPage(0);
+    setAdsPdfPageCount(0);
+    if (item.type === 'pdf') {
+      setLoading(true);
+      try {
+        await PDFRendererModule?.closeDocument?.().catch(() => {});
+        const document = await PDFRendererModule.openDocument(item.uri);
+        const pageResult = await PDFRendererModule.renderPage(0, 1600, 900, 0);
+        setAdsImage(pageResult.base64);
+        setAdsPdfPageCount(document.pageCount);
+      } finally { setLoading(false); }
+    } else if (item.type === 'image') {
+      setAdsImage(item.uri);
+    }
+  };
+
+  const startAds = async (items) => {
+    const source = Array.from(items || []);
+    if (!source.length) throw new Error('No image, video, or PDF files found in Ads folder.');
+    setTimerEnabled(false);
+    setAdsAutoSuppressed(false);
+    setCleanMode(false);
+    // Ads owns the renderer while playing. Clear the regular viewer state so
+    // a stopped USB loop never exposes a stale PDF render underneath it.
+    setPdfUri(null);
+    setPageImage(null);
+    setPage(0);
+    setPageCount(0);
+    setRotation(0);
+    setAdsPlaylist(source);
+    setAdsActive(true);
+    await showAd(0, source);
+  };
+
+  const scanUsbAds = async () => {
+    if (!FilePickerModule?.scanAdsFolder) throw new Error('USB Ads scanner is unavailable in this build.');
+    const files = await FilePickerModule.scanAdsFolder();
+    await startAds(files);
+  };
+
+  const chooseUsbAdsFolder = async () => {
+    if (!FilePickerModule?.requestUsbAdsAccess) throw new Error('USB Ads storage access is unavailable in this build.');
+    const allowed = await FilePickerModule.requestUsbAdsAccess();
+    if (!allowed) throw new Error('Allow storage access on the Android settings page, then return to this app. USB Ads will start automatically when pendrive Ads folder is detected.');
+    await scanUsbAds();
+  };
+
+  const nextAd = async () => {
+    const item = adsPlaylist[adsIndex];
+    if (!item || loading) return;
+    if (item.type === 'pdf' && adsPdfPage + 1 < adsPdfPageCount) {
+      setLoading(true);
+      try {
+        const pageResult = await PDFRendererModule.renderPage(adsPdfPage + 1, 1600, 900, 0);
+        setAdsImage(pageResult.base64);
+        setAdsPdfPage((value) => value + 1);
+      } finally { setLoading(false); }
+      return;
+    }
+    await showAd(adsIndex + 1);
+  };
+  adsNextRef.current = nextAd;
+
+  const previousAd = async () => {
+    if (!adsPlaylist.length || loading) return;
+    await showAd(adsIndex - 1);
+  };
+
   cmsCommandRef.current = async ({ id, type, payload }) => {
     if (!id) return;
     if (processedCmsCommandIdsRef.current.has(id)) return;
@@ -296,6 +439,20 @@ function App() {
         closeViewer();
       } else if (type === 'clearLibrary') {
         await clearLibrary();
+      } else if (type === 'adsScan') {
+        await scanUsbAds();
+      } else if (type === 'adsStart') {
+        await scanUsbAds();
+      } else if (type === 'adsStop') {
+        await stopAds();
+      } else if (type === 'adsNext') {
+        if (!adsActive) throw new Error('USB Ads mode is not playing.');
+        await nextAd();
+      } else if (type === 'adsPrevious') {
+        if (!adsActive) throw new Error('USB Ads mode is not playing.');
+        await previousAd();
+      } else if (type === 'adsSeconds') {
+        setAdsSeconds(Math.max(1, Math.min(3600, Math.floor(Number(data.seconds)) || 10)));
       } else {
         throw new Error('This command is unavailable because no PDF is open.');
       }
@@ -335,20 +492,24 @@ function App() {
 
   useEffect(() => {
     CmsServerModule?.updateState?.({
-      viewerOpen: Boolean(pdfUri),
-      filename: pdfUri ? (playlist[documentIndex]?.name || fileNameFromUri(pdfUri)) : '',
-      documentIndex: pdfUri ? documentIndex + 1 : 0,
-      documentCount: playlist.length,
-      page: pdfUri ? page + 1 : 0,
-      pageCount,
+      viewerOpen: Boolean(pdfUri) || adsActive,
+      filename: adsActive ? (adsPlaylist[adsIndex]?.name || 'USB Ad') : (pdfUri ? (playlist[documentIndex]?.name || fileNameFromUri(pdfUri)) : ''),
+      documentIndex: adsActive ? adsIndex + 1 : (pdfUri ? documentIndex + 1 : 0),
+      documentCount: adsActive ? adsPlaylist.length : playlist.length,
+      page: adsActive && adsPlaylist[adsIndex]?.type === 'pdf' ? adsPdfPage + 1 : (pdfUri ? page + 1 : 0),
+      pageCount: adsActive && adsPlaylist[adsIndex]?.type === 'pdf' ? adsPdfPageCount : pageCount,
       rotation,
       fullscreen: cleanMode,
       timerEnabled,
       timerSeconds,
       timerLoop: true,
       loading,
+      adsActive,
+      adsCount: adsPlaylist.length,
+      adsIndex: adsIndex + 1,
+      adsSeconds,
     });
-  }, [cleanMode, documentIndex, loading, page, pageCount, pdfUri, playlist, rotation, timerEnabled, timerSeconds]);
+  }, [adsActive, adsIndex, adsPdfPage, adsPdfPageCount, adsPlaylist, adsSeconds, cleanMode, documentIndex, loading, page, pageCount, pdfUri, playlist, rotation, timerEnabled, timerSeconds]);
 
   // One timeout per displayed page gives every page its configured duration.
   useEffect(() => {
@@ -358,6 +519,15 @@ function App() {
     }, timerSeconds * 1000);
     return () => clearTimeout(timer);
   }, [timerEnabled, timerSeconds, pdfUri, cleanMode, loading, page, documentIndex, pageCount, playlist]);
+
+  // Images and each PDF page use the ad duration; native videos advance only
+  // after their completion callback, so they are never cut off mid-playback.
+  useEffect(() => {
+    const item = adsPlaylist[adsIndex];
+    if (!adsActive || !item || item.type === 'video' || loading) return undefined;
+    const timeout = setTimeout(() => adsNextRef.current?.(), adsSeconds * 1000);
+    return () => clearTimeout(timeout);
+  }, [adsActive, adsImage, adsIndex, adsPdfPage, adsPlaylist, adsSeconds, loading]);
 
   // Fallback for TV launchers that do not send every native onFocus event to JS.
   useEffect(() => {
@@ -380,6 +550,18 @@ function App() {
     });
     return () => subscription.remove();
   }, [cleanMode, documentIndex, focusedControl, page, pageCount, pdfUri, playlist.length]);
+
+  // Some TV launchers do not forward visual focus updates to TouchableOpacity
+  // on the home screen. Keep a matching JS focus state from the remote's
+  // left/right events, so the yellow/blue active choice is always visible.
+  useEffect(() => {
+    if (!appAuthenticated || pdfUri || adsActive) return undefined;
+    const subscription = DeviceEventEmitter.addListener('onHWKeyEvent', (event) => {
+      if (Number(event?.eventKeyAction) !== 0 || !['left', 'right'].includes(event?.eventType)) return;
+      setHomeFocused((current) => event.eventType === 'left' ? 'pdf' : 'ads');
+    });
+    return () => subscription.remove();
+  }, [adsActive, appAuthenticated, pdfUri]);
 
   const stopTimerForManualAction = (action) => {
     setTimerEnabled(false);
@@ -432,6 +614,18 @@ function App() {
           {loginError ? <Text style={styles.loginError}>{loginError}</Text> : null}
           <Text style={styles.licenseContact}>For license contact:{'\n'}+918574700615, 9227896944</Text>
         </View>
+      </View>
+    );
+  }
+
+  if (adsActive) {
+    const currentAd = adsPlaylist[adsIndex];
+    return (
+      <View style={styles.adsScreen}>
+        {currentAd?.type === 'video' ? (
+          <AdsVideoView style={styles.adsMedia} source={currentAd.uri} muted={false} onAdComplete={() => adsNextRef.current?.()} onAdError={() => adsNextRef.current?.()} />
+        ) : adsImage ? <Image source={{ uri: adsImage }} style={styles.adsMedia} resizeMode="contain" /> : null}
+        {loading ? <ActivityIndicator size="large" color="#fff" style={styles.loader} /> : null}
       </View>
     );
   }
@@ -509,10 +703,22 @@ function App() {
         <TouchableOpacity
           accessible={true}
           accessibilityLabel="Open PDF playlist"
-          hasTVPreferredFocus={true}
-          style={styles.button}
+          hasTVPreferredFocus={homeFocused === 'pdf'}
+          focusable={true}
+          style={[styles.button, homeFocused === 'pdf' && styles.buttonFocused]}
+          onFocus={() => setHomeFocused('pdf')}
           onPress={openPdfs}>
           <Text style={styles.buttonText}>Open PDFs</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          accessible={true}
+          accessibilityLabel="Start USB Ads scan"
+          hasTVPreferredFocus={homeFocused === 'ads'}
+          focusable={true}
+          style={[styles.button, styles.adsStartButton, homeFocused === 'ads' && styles.buttonFocused]}
+          onFocus={() => setHomeFocused('ads')}
+          onPress={() => chooseUsbAdsFolder().catch((error) => Alert.alert('USB Ads', error.message || 'Could not read USB Ads folder.'))}>
+          <Text style={styles.buttonText}>USB Ads</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -538,6 +744,9 @@ const styles = StyleSheet.create({
   button: { backgroundColor: '#2196F3', paddingVertical: 20, paddingHorizontal: 40, borderRadius: 12, borderWidth: 3, borderColor: 'transparent' },
   buttonFocused: { borderColor: '#FFD600', backgroundColor: '#0D6EFD', elevation: 12, transform: [{ scale: 1.08 }] },
   buttonText: { color: '#fff', fontSize: 24, fontWeight: 'bold' },
+  adsStartButton: { marginTop: 18, backgroundColor: '#00796B' },
+  adsScreen: { flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
+  adsMedia: { width: '100%', height: '100%' },
   viewerHeader: { flexDirection: 'row', padding: 20, backgroundColor: '#202020', alignItems: 'center' },
   headerText: { flex: 1 },
   filename: { color: '#fff', fontSize: 24, fontWeight: 'bold' },

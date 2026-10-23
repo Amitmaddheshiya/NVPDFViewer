@@ -64,7 +64,14 @@ class CmsHttpServer extends NanoHTTPD {
             if ("/".equals(uri) || "/index.html".equals(uri)) return cors(asset("cms.html", "text/html; charset=utf-8"));
             if ("/api/qr.png".equals(uri)) return cors(qrCode(session));
             if ("/api/login".equals(uri) && Method.POST.equals(session.getMethod())) return cors(login(session));
-            if ("/api/status".equals(uri) && authorized(session)) return cors(json(Response.Status.OK, stateJson));
+            // Status is polled by the CMS every second. A restarted/updated
+            // TV app clears its in-memory sessions, so report an explicit
+            // 401 here instead of falling through to a misleading 404. The
+            // browser can then discard its stale token and show Login again.
+            if ("/api/status".equals(uri)) {
+                if (!authorized(session)) return cors(json(Response.Status.UNAUTHORIZED, "{\"error\":\"Please login again\"}"));
+                return cors(json(Response.Status.OK, stateJson));
+            }
             if ("/api/upload".equals(uri) && Method.POST.equals(session.getMethod())) return cors(upload(session));
             if ("/api/command".equals(uri) && Method.POST.equals(session.getMethod())) return cors(command(session));
             return cors(json(Response.Status.NOT_FOUND, "{\"error\":\"Not found\"}"));
@@ -101,7 +108,7 @@ class CmsHttpServer extends NanoHTTPD {
         JSONObject body = new JSONObject(files.getOrDefault("postData", "{}"));
         if (!authorized(session)) return json(Response.Status.UNAUTHORIZED, "{\"error\":\"Please login again\"}");
         String type = body.optString("type");
-        if (!type.matches("previous|next|rotate|fullscreen|close|timer|timerSeconds|clearLibrary")) {
+        if (!type.matches("previous|next|rotate|fullscreen|close|timer|timerSeconds|clearLibrary|adsScan|adsStart|adsStop|adsNext|adsPrevious|adsSeconds")) {
             return json(Response.Status.BAD_REQUEST, "{\"error\":\"Unsupported command\"}");
         }
         JSONObject event = new JSONObject();

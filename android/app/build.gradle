@@ -21,8 +21,10 @@ android {
         applicationId "com.nextview.pdfviewer"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        // Launcher packages use this to recognize an icon update. Keep it
+        // increasing for each APK that is installed over an older build.
+        versionCode 2
+        versionName "1.0.1"
     }
 
     signingConfigs {
@@ -50,6 +52,7 @@ dependencies {
     implementation("com.facebook.react:react-android")
     implementation("org.nanohttpd:nanohttpd:2.3.1")
     implementation("com.google.zxing:core:3.5.3")
+    implementation("androidx.documentfile:documentfile:1.0.1")
 
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")
