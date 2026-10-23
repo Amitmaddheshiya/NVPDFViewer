@@ -44,7 +44,13 @@ public class PDFRendererModule extends ReactContextBaseJavaModule {
             Context context = getReactApplicationContext();
             Uri uri = Uri.parse(uriString);
             
-            parcelFileDescriptor = context.getContentResolver().openFileDescriptor(uri, "r");
+            if ("file".equals(uri.getScheme())) {
+                parcelFileDescriptor = ParcelFileDescriptor.open(
+                    new File(uri.getPath()), ParcelFileDescriptor.MODE_READ_ONLY
+                );
+            } else {
+                parcelFileDescriptor = context.getContentResolver().openFileDescriptor(uri, "r");
+            }
             if (parcelFileDescriptor == null) {
                 promise.reject("OPEN_ERROR", "Could not open file descriptor");
                 return;

@@ -26,6 +26,7 @@ public class MainApplication extends Application implements ReactApplication {
           List<ReactPackage> packages = new PackageList(this).getPackages();
           packages.add(new FilePickerPackage());
           packages.add(new PDFRendererPackage());
+          packages.add(new CmsServerPackage());
           return packages;
         }
 
