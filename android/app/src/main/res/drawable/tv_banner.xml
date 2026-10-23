@@ -1,0 +1,41 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+
+    <!-- A 16:9, resolution-independent Android TV launcher banner. -->
+    <path android:fillColor="#5B1118" android:pathData="M0,0H320V180H0Z" />
+    <path android:fillColor="#7F1D27" android:pathData="M0,0H320V9H0Z" />
+    <path android:fillColor="#3D0B10" android:pathData="M0,171H320V180H0Z" />
+    <path android:fillColor="#D8B46A" android:fillAlpha="0.5"
+        android:pathData="M12,12H308V14H12ZM12,166H308V168H12Z" />
+
+    <!-- PDF document mark. -->
+    <path android:fillColor="#F7E5BD"
+        android:pathData="M43,31Q43,23 51,23H108L137,52V137Q137,145 129,145H51Q43,145 43,137Z" />
+    <path android:fillColor="#D9B972" android:pathData="M108,23V47Q108,52 113,52H137Z" />
+    <path android:fillColor="#C69B4B" android:pathData="M109,23L137,52H113Q108,52 108,47Z" />
+    <path android:fillColor="#8B1921"
+        android:pathData="M64,64C70,45 76,43 80,47C85,52 78,67 72,79C81,78 93,80 96,86C99,92 91,96 76,92C70,103 64,111 58,110C51,109 54,98 63,85C55,82 51,77 54,72C56,69 60,66 64,64ZM68,69C65,70 62,72 62,74C62,76 65,78 67,79C69,75 70,72 71,69ZM72,85C67,92 64,99 65,101C67,102 71,95 75,88ZM80,84C84,87 90,88 91,86C91,84 86,82 79,83Z" />
+    <path android:fillColor="#9F2026" android:pathData="M54,116H88V121H54ZM54,126H102V131H54Z" />
+
+    <!-- Magnifier. -->
+    <path android:fillColor="#B9862D" android:pathData="M101,94a28,28 0,1 0,0.1 0M101,100a22,22 0,1 1,0 -44a22,22 0,0 1,0 44" />
+    <path android:fillColor="#FFF1C9" android:fillAlpha="0.72" android:pathData="M101,60a18,18 0,1 0,0.1 0M101,64a14,14 0,1 1,0 28a14,14 0,0 1,0 -28" />
+    <path android:fillColor="#B9862D" android:pathData="M120,113L128,105L157,134L149,142Z" />
+    <path android:fillColor="#E5BF69" android:pathData="M124,110L128,106L157,135L153,139Z" />
+
+    <!-- Exact banner title: NV PDF. Simple block letterforms keep it legible on every TV launcher. -->
+    <!-- N -->
+    <path android:fillColor="#F7E5BD" android:pathData="M164,64H169L179,79V64H184V91H179L169,76V91H164Z" />
+    <!-- V -->
+    <path android:fillColor="#F7E5BD" android:pathData="M187,64H193L200,82L207,64H213L203,91H197Z" />
+    <!-- P -->
+    <path android:fillColor="#D8B46A" android:pathData="M222,64H232Q241,64 241,73Q241,82 232,82H228V91H222ZM228,70V76H232Q235,76 235,73Q235,70 232,70Z" />
+    <!-- D -->
+    <path android:fillColor="#D8B46A" android:pathData="M245,64H254Q265,64 265,77.5Q265,91 254,91H245ZM251,70V85H254Q259,85 259,77.5Q259,70 254,70Z" />
+    <!-- F -->
+    <path android:fillColor="#D8B46A" android:pathData="M270,64H292V70H276V75H289V81H276V91H270Z" />
+    <path android:fillColor="#F7E5BD" android:fillAlpha="0.78" android:pathData="M164,105H292V107H164Z" />
+</vector>

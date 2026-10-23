@@ -7,13 +7,17 @@ node_modules/
 
 # Android build outputs and local configuration
 android/.gradle/
+.gradle-codex/
 android/build/
 android/app/build/
 android/app/.cxx/
+android/.cxx/
+android/captures/
 android/local.properties
 *.apk
 *.aab
 *.ap_
+*.hprof
 *.keystore
 !android/app/debug.keystore
 

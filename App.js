@@ -56,6 +56,7 @@ function App() {
   const cmsCommandRef = useRef(null);
   const cmsPollBusyRef = useRef(false);
   const adsNextRef = useRef(null);
+  const startAdsRef = useRef(null);
   // A CMS command is sent through the native event channel immediately and is
   // also left in the native queue as a delivery fallback. Remember its id so
   // the fallback cannot execute the same action a second time.
@@ -163,7 +164,7 @@ function App() {
     const scan = async () => {
       try {
         const files = await FilePickerModule.scanAdsFolder();
-        if (!cancelled && files?.length) await startAds(files);
+        if (!cancelled && files?.length) await startAdsRef.current?.(files);
       } catch (_) { /* Pendrive/Ads folder not present yet. */ }
     };
     scan();
@@ -181,7 +182,7 @@ function App() {
       setTimeout(async () => {
         try {
           const files = await FilePickerModule?.scanAdsFolder?.();
-          if (files?.length) await startAds(files);
+          if (files?.length) await startAdsRef.current?.(files);
           else if (adsActive) await stopAds(false);
         } catch (_) {
           if (adsActive) stopAds(false);
@@ -368,11 +369,23 @@ function App() {
     setAdsActive(true);
     await showAd(0, source);
   };
+  startAdsRef.current = startAds;
 
   const scanUsbAds = async () => {
     if (!FilePickerModule?.scanAdsFolder) throw new Error('USB Ads scanner is unavailable in this build.');
     const files = await FilePickerModule.scanAdsFolder();
     await startAds(files);
+  };
+
+  const openSavedPdfViewer = async () => {
+    const saved = playlistRef.current;
+    if (!saved.length) throw new Error('No saved PDF is available. Upload or open a PDF first.');
+    // Choosing the PDF viewer explicitly must not be immediately overridden
+    // by the USB auto-play policy.
+    setAdsAutoSuppressed(true);
+    await stopAds(false);
+    setCleanMode(false);
+    await loadDocument(0, 0, saved);
   };
 
   const chooseUsbAdsFolder = async () => {
@@ -439,6 +452,8 @@ function App() {
         closeViewer();
       } else if (type === 'clearLibrary') {
         await clearLibrary();
+      } else if (type === 'openPdf') {
+        await openSavedPdfViewer();
       } else if (type === 'adsScan') {
         await scanUsbAds();
       } else if (type === 'adsStart') {
@@ -557,8 +572,8 @@ function App() {
   useEffect(() => {
     if (!appAuthenticated || pdfUri || adsActive) return undefined;
     const subscription = DeviceEventEmitter.addListener('onHWKeyEvent', (event) => {
-      if (Number(event?.eventKeyAction) !== 0 || !['left', 'right'].includes(event?.eventType)) return;
-      setHomeFocused((current) => event.eventType === 'left' ? 'pdf' : 'ads');
+      if (Number(event?.eventKeyAction) !== 0 || !['left', 'right', 'up', 'down'].includes(event?.eventType)) return;
+      setHomeFocused((current) => ['left', 'up'].includes(event.eventType) ? 'pdf' : 'ads');
     });
     return () => subscription.remove();
   }, [adsActive, appAuthenticated, pdfUri]);
@@ -624,7 +639,7 @@ function App() {
       <View style={styles.adsScreen}>
         {currentAd?.type === 'video' ? (
           <AdsVideoView style={styles.adsMedia} source={currentAd.uri} muted={false} onAdComplete={() => adsNextRef.current?.()} onAdError={() => adsNextRef.current?.()} />
-        ) : adsImage ? <Image source={{ uri: adsImage }} style={styles.adsMedia} resizeMode="contain" /> : null}
+        ) : adsImage ? <Image source={{ uri: adsImage }} style={styles.adsMedia} resizeMode="stretch" /> : null}
         {loading ? <ActivityIndicator size="large" color="#fff" style={styles.loader} /> : null}
       </View>
     );

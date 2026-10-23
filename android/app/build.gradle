@@ -23,8 +23,8 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         // Launcher packages use this to recognize an icon update. Keep it
         // increasing for each APK that is installed over an older build.
-        versionCode 2
-        versionName "1.0.1"
+        versionCode 3
+        versionName "1.0.2"
     }
 
     signingConfigs {
