@@ -341,8 +341,11 @@ public class FilePickerModule extends ReactContextBaseJavaModule implements Acti
         if (name == null) return null;
         String lower = name.toLowerCase();
         if (lower.endsWith(".pdf")) return "pdf";
-        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") || lower.endsWith(".webp")) return "image";
-        if (lower.endsWith(".mp4") || lower.endsWith(".m4v") || lower.endsWith(".webm") || lower.endsWith(".3gp")) return "video";
+        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") || lower.endsWith(".webp")
+                || lower.endsWith(".gif") || lower.endsWith(".bmp") || lower.endsWith(".heic")) return "image";
+        if (lower.endsWith(".mp4") || lower.endsWith(".m4v") || lower.endsWith(".webm") || lower.endsWith(".3gp")
+                || lower.endsWith(".mkv") || lower.endsWith(".avi") || lower.endsWith(".mov") || lower.endsWith(".mpeg")
+                || lower.endsWith(".ts")) return "video";
         return null;
     }
 
