@@ -41,6 +41,10 @@ public class CmsServerModule extends ReactContextBaseJavaModule {
     private static final int PORT = 8081;
     private static CmsHttpServer server;
     private static final String PREFS_NAME = "cms_library";
+    // This value intentionally lives in normal app-private storage. Android
+    // clears it on either Clear data or uninstall, which makes the IP-derived
+    // code the bootstrap password again on the next launch.
+    private static final String APP_LOGIN_PASSWORD_KEY = "app_login_password";
     private static final String PLAYLIST_KEY = "playlist";
     private static final String TIMER_ENABLED_KEY = "timer_enabled";
     private static final String TIMER_SECONDS_KEY = "timer_seconds";
@@ -232,9 +236,36 @@ public class CmsServerModule extends ReactContextBaseJavaModule {
     @ReactMethod
     public void validateLogin(String password, Promise promise) {
         try {
-            promise.resolve(loginPassword().equals(password));
+            String enteredPassword = password == null ? "" : password;
+            android.content.SharedPreferences prefs = reactContext
+                    .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+            String savedPassword = prefs.getString(APP_LOGIN_PASSWORD_KEY, null);
+
+            // The first app login must still use the password derived from the
+            // current TV IP. Once it succeeds, retain exactly that code so a
+            // later DHCP/IP-address change cannot lock the user out.
+            if (savedPassword != null) {
+                promise.resolve(savedPassword.equals(enteredPassword));
+                return;
+            }
+
+            boolean valid = loginPassword().equals(enteredPassword);
+            if (valid) prefs.edit().putString(APP_LOGIN_PASSWORD_KEY, enteredPassword).apply();
+            promise.resolve(valid);
         } catch (Exception error) {
             promise.reject("LOGIN_ERROR", error.getMessage(), error);
+        }
+    }
+
+    @ReactMethod
+    public void getSavedLoginPassword(Promise promise) {
+        try {
+            String savedPassword = reactContext
+                    .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .getString(APP_LOGIN_PASSWORD_KEY, null);
+            promise.resolve(savedPassword);
+        } catch (Exception error) {
+            promise.reject("LOGIN_PASSWORD_ERROR", error.getMessage(), error);
         }
     }
 

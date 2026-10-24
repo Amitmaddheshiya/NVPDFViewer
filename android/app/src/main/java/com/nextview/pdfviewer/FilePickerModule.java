@@ -165,6 +165,14 @@ public class FilePickerModule extends ReactContextBaseJavaModule implements Acti
             List<File> usbFiles = scanMountedUsbAds();
             if (!usbFiles.isEmpty()) { promise.resolve(toAdsArray(usbFiles)); return; }
         } catch (Exception ignored) {
+            // The internal-storage and MediaStore fallbacks follow below.
+        }
+        try {
+            // Only try this after removable storage. This keeps a pendrive's
+            // Ads folder authoritative whenever it is connected.
+            List<File> internalFiles = scanInternalStorageAds();
+            if (!internalFiles.isEmpty()) { promise.resolve(toAdsArray(internalFiles)); return; }
+        } catch (Exception ignored) {
             // MediaStore and document-tree fallbacks follow below.
         }
         try {
@@ -174,8 +182,8 @@ public class FilePickerModule extends ReactContextBaseJavaModule implements Acti
         String raw = getReactApplicationContext().getSharedPreferences(ADS_PREFS, 0).getString(ADS_TREE_URI, null);
         if (raw == null) {
             String message = hasUsbStorageAccess()
-                    ? "USB Ads folder not found. Put files in Pendrive/Ads (exactly at the pendrive root), then reconnect the pendrive."
-                    : "Allow All files access for NV PDF Viewer, then reconnect the pendrive containing an Ads folder.";
+                    ? "No Ads folder was found. Put files in Pendrive/Ads, or in the TV internal storage Ads folder."
+                    : "Allow All files access for NV PDF Viewer, then use Pendrive/Ads or the TV internal storage Ads folder.";
             promise.reject("NO_ADS_FOLDER", message);
             return;
         }
@@ -225,6 +233,18 @@ public class FilePickerModule extends ReactContextBaseJavaModule implements Acti
         return output;
     }
 
+    /** TV main storage fallback: /storage/emulated/0/Ads (often also visible
+     * as /sdcard/Ads). It is deliberately checked only after all USB volumes. */
+    private List<File> scanInternalStorageAds() {
+        if (!hasUsbStorageAccess()) return Collections.emptyList();
+        File ads = findAdsDirectory(Environment.getExternalStorageDirectory());
+        if (!ads.isDirectory() || !ads.canRead()) return Collections.emptyList();
+        List<File> output = new ArrayList<>();
+        collectRawAdFiles(ads, output);
+        Collections.sort(output, Comparator.comparing(file -> file.getName().toLowerCase()));
+        return output;
+    }
+
     private void addVolumeChildren(Set<File> output, File parent) {
         File[] volumes = parent.listFiles();
         if (volumes == null) return;
@@ -262,15 +282,24 @@ public class FilePickerModule extends ReactContextBaseJavaModule implements Acti
     private List<AdEntry> scanMediaStoreAds() {
         List<AdEntry> results = new ArrayList<>();
         ContentResolver resolver = getReactApplicationContext().getContentResolver();
-        Set<String> volumeNames = new LinkedHashSet<>();
+        Set<String> discoveredVolumeNames = new LinkedHashSet<>();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             try {
                 Collection<String> discovered = MediaStore.getExternalVolumeNames(getReactApplicationContext());
-                if (discovered != null) volumeNames.addAll(discovered);
+                if (discovered != null) discoveredVolumeNames.addAll(discovered);
             } catch (Exception ignored) { }
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) volumeNames.add(MediaStore.VOLUME_EXTERNAL);
-        else volumeNames.add("external");
+        Set<String> volumeNames = new LinkedHashSet<>();
+        // A UUID-style volume is removable. Keep it ahead of primary storage
+        // even when the TV returns its primary volume first.
+        for (String volume : discoveredVolumeNames)
+            if (!isPrimaryMediaVolume(volume)) volumeNames.add(volume);
+        // Query removable volumes before primary storage. On Android 10+ the
+        // aggregate "external" volume mixes both, so avoid it whenever the
+        // per-volume list is available.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            volumeNames.add(MediaStore.VOLUME_EXTERNAL_PRIMARY);
+        } else volumeNames.add("external");
 
         String[] projection = new String[] {
                 MediaStore.Files.FileColumns._ID,
@@ -306,8 +335,11 @@ public class FilePickerModule extends ReactContextBaseJavaModule implements Acti
                 // removable volumes are still attempted.
             } finally { if (cursor != null) cursor.close(); }
         }
-        Collections.sort(results, Comparator.comparing(entry -> String.valueOf(entry.name).toLowerCase(Locale.US)));
         return results;
+    }
+
+    private boolean isPrimaryMediaVolume(String volume) {
+        return MediaStore.VOLUME_EXTERNAL_PRIMARY.equals(volume) || "external".equals(volume);
     }
 
     private WritableArray toAdsEntryArray(List<AdEntry> entries) {

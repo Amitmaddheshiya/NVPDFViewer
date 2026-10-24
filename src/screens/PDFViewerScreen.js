@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   Image,
   ActivityIndicator,
-  Alert,
   BackHandler,
 } from 'react-native';
 import { NativeModules } from 'react-native';
@@ -23,53 +22,14 @@ const PDFViewerScreen = ({ navigation, route }) => {
   const [zoom, setZoom] = useState(1);
   const [focusedControl, setFocusedControl] = useState(null);
 
-  useEffect(() => {
-    if (pdfUri) {
-      openPDF(pdfUri);
-    }
-    return () => {
-      PDFRendererModule.closeDocument(() => {});
-    };
-  }, [pdfUri]);
-
-  useEffect(() => {
-    const backHandler = BackHandler.addEventListener(
-      'hardwareBackPress',
-      handleBackPress
-    );
-    return () => backHandler.remove();
-  }, []);
-
-  const handleBackPress = () => {
-    PDFRendererModule.closeDocument(() => {});
-    navigation.goBack();
-    return true;
-  };
-
-  const openPDF = async (uri) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await PDFRendererModule.openDocument(uri);
-      setTotalPages(result.pageCount);
-      if (result.pageCount > 0) {
-        renderPage(0);
-      }
-    } catch (err) {
-      setError('Failed to open PDF: ' + err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const renderPage = async (pageIndex) => {
+  const renderPage = useCallback(async (pageIndex, pageZoom) => {
     setLoading(true);
     setError(null);
     try {
       const result = await PDFRendererModule.renderPage(
         pageIndex,
-        1920 * zoom,
-        1080 * zoom
+        1920 * pageZoom,
+        1080 * pageZoom
       );
       setPageImage(result.base64);
       setCurrentPage(pageIndex);
@@ -78,35 +38,74 @@ const PDFViewerScreen = ({ navigation, route }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  const openPDF = useCallback(async (uri) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await PDFRendererModule.openDocument(uri);
+      setTotalPages(result.pageCount);
+      if (result.pageCount > 0) {
+        await renderPage(0, 1);
+      }
+    } catch (err) {
+      setError('Failed to open PDF: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [renderPage]);
+
+  const handleBackPress = useCallback(() => {
+    PDFRendererModule.closeDocument(() => {});
+    navigation.goBack();
+    return true;
+  }, [navigation]);
+
+  useEffect(() => {
+    if (pdfUri) {
+      openPDF(pdfUri);
+    }
+    return () => {
+      PDFRendererModule.closeDocument(() => {});
+    };
+  }, [openPDF, pdfUri]);
+
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener(
+      'hardwareBackPress',
+      handleBackPress
+    );
+    return () => backHandler.remove();
+  }, [handleBackPress]);
 
   const handleNextPage = () => {
     if (currentPage < totalPages - 1) {
-      renderPage(currentPage + 1);
+      renderPage(currentPage + 1, zoom);
     }
   };
 
   const handlePreviousPage = () => {
     if (currentPage > 0) {
-      renderPage(currentPage - 1);
+      renderPage(currentPage - 1, zoom);
     }
   };
 
   const handleZoomIn = () => {
     const newZoom = Math.min(zoom + 0.25, 3);
     setZoom(newZoom);
-    renderPage(currentPage);
+    renderPage(currentPage, newZoom);
   };
 
   const handleZoomOut = () => {
     const newZoom = Math.max(zoom - 0.25, 0.5);
     setZoom(newZoom);
-    renderPage(currentPage);
+    renderPage(currentPage, newZoom);
   };
 
   const handleFitToScreen = () => {
     setZoom(1);
-    renderPage(currentPage);
+    renderPage(currentPage, 1);
   };
 
   if (error) {

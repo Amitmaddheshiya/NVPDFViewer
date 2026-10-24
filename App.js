@@ -148,6 +148,17 @@ function App() {
     CmsServerModule?.getCmsQrCode?.().then((result) => setCmsQr(result)).catch(() => {});
   }, []);
 
+  // After the first IP-based login, native storage retains that password.
+  // Put it back into the login field on future launches so the user only has
+  // to select Login. Clear Data or uninstall removes this saved value.
+  useEffect(() => {
+    CmsServerModule?.getSavedLoginPassword?.()
+      .then((savedPassword) => {
+        if (typeof savedPassword === 'string') setAppPassword(savedPassword);
+      })
+      .catch(() => {});
+  }, []);
+
   // TV file-picker apps are often absent. Ask once for Android's official
   // storage permission page; after owner approval the native scanner can read
   // /storage/<USB-VOLUME>/Ads directly.
@@ -727,13 +738,13 @@ function App() {
         </TouchableOpacity>
         <TouchableOpacity
           accessible={true}
-          accessibilityLabel="Start USB Ads scan"
+          accessibilityLabel="Start Ads scan"
           hasTVPreferredFocus={homeFocused === 'ads'}
           focusable={true}
           style={[styles.button, styles.adsStartButton, homeFocused === 'ads' && styles.buttonFocused]}
           onFocus={() => setHomeFocused('ads')}
           onPress={() => chooseUsbAdsFolder().catch((error) => Alert.alert('USB Ads', error.message || 'Could not read USB Ads folder.'))}>
-          <Text style={styles.buttonText}>USB Ads</Text>
+          <Text style={styles.buttonText}>Ads</Text>
         </TouchableOpacity>
       </View>
     </View>
