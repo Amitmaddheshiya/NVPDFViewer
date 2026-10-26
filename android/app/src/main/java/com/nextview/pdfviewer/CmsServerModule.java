@@ -385,11 +385,13 @@ public class CmsServerModule extends ReactContextBaseJavaModule {
 
     @ReactMethod
     public void reloadApp() {
-        // Reload the React Native bundle and restart the app
-        reactContext.runOnJSQueueThread(() -> {
+        // Restart the app by recreating the activity
+        reactContext.runOnUiQueueThread(() -> {
             try {
-                reactContext.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
-                        .emit("reloadApp", null);
+                android.content.Intent intent = reactContext.getCurrentActivity().getIntent();
+                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP | android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                reactContext.startActivity(intent);
+                reactContext.getCurrentActivity().finish();
             } catch (Exception ignored) { }
         });
     }

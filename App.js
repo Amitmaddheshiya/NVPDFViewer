@@ -424,7 +424,21 @@ function App() {
     if (!FilePickerModule?.requestUsbAdsAccess) throw new Error('USB Ads storage access is unavailable in this build.');
     const allowed = await FilePickerModule.requestUsbAdsAccess();
     if (!allowed) throw new Error('Allow storage access on the Android settings page, then return to this app. USB Ads will start automatically when pendrive Ads folder is detected.');
-    await scanUsbAds();
+    try {
+      await scanUsbAds();
+    } catch (error) {
+      // If no ads found, still activate ads mode to show instruction screen
+      setAdsAutoSuppressed(true);
+      setCleanMode(false);
+      setAdsRotation(0);
+      setPdfUri(null);
+      setPageImage(null);
+      setPage(0);
+      setPageCount(0);
+      setRotation(0);
+      setAdsPlaylist([]);
+      setAdsActive(true);
+    }
   };
 
   const nextAd = async () => {
@@ -514,13 +528,14 @@ function App() {
         await FilePickerModule.clearCmsAds();
         await stopAds(false);
       } else if (type === 'reloadApp') {
-        // Reload the app by reloading the React Native bundle
-        if (typeof __DEV__ !== 'undefined' && __DEV__) {
-          // In development, just reload the bundle
-          location.reload();
+        // Reload the app by restarting the activity
+        if (CmsServerModule?.reloadApp) {
+          CmsServerModule.reloadApp();
         } else {
-          // In production, restart the activity
-          BackHandler.exitApp();
+          // Fallback: reload the bundle
+          if (typeof __DEV__ !== 'undefined' && __DEV__) {
+            location.reload();
+          }
         }
       } else {
         throw new Error('This command is unavailable because no PDF is open.');

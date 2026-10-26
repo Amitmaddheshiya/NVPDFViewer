@@ -354,7 +354,7 @@ class CmsHttpServer extends NanoHTTPD {
         JSONObject body = new JSONObject(files.getOrDefault("postData", "{}"));
         if (!authorized(session)) return json(Response.Status.UNAUTHORIZED, "{\"error\":\"Please login again\"}");
         String type = body.optString("type");
-        if (!type.matches("previous|next|rotate|fullscreen|close|timer|timerSeconds|clearLibrary|openPdf|adsScan|adsStart|adsStop|adsNext|adsPrevious|adsRotate|adsSeconds|clearAds")) {
+        if (!type.matches("previous|next|rotate|fullscreen|close|timer|timerSeconds|clearLibrary|openPdf|adsScan|adsStart|adsStop|adsNext|adsPrevious|adsRotate|adsSeconds|clearAds|reloadApp")) {
             return json(Response.Status.BAD_REQUEST, "{\"error\":\"Unsupported command\"}");
         }
         JSONObject event = new JSONObject();
