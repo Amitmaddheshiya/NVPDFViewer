@@ -383,6 +383,17 @@ public class CmsServerModule extends ReactContextBaseJavaModule {
     @ReactMethod public void addListener(String eventName) { }
     @ReactMethod public void removeListeners(double count) { }
 
+    @ReactMethod
+    public void reloadApp() {
+        // Reload the React Native bundle and restart the app
+        reactContext.runOnJSQueueThread(() -> {
+            try {
+                reactContext.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
+                        .emit("reloadApp", null);
+            } catch (Exception ignored) { }
+        });
+    }
+
     @Override
     public void invalidate() {
         super.invalidate();

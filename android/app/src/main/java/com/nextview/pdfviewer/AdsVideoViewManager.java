@@ -16,6 +16,7 @@ public class AdsVideoViewManager extends SimpleViewManager<AdsVideoView> {
     @NonNull @Override protected AdsVideoView createViewInstance(@NonNull ThemedReactContext context) { return new AdsVideoView(context); }
     @ReactProp(name = "source") public void setSource(AdsVideoView view, String source) { view.setSource(source); }
     @ReactProp(name = "muted", defaultBoolean = false) public void setMuted(AdsVideoView view, boolean muted) { view.setMuted(muted); }
+    @ReactProp(name = "rotation", defaultInt = 0) public void setRotation(AdsVideoView view, int rotation) { view.setRotation(rotation); }
     @Override public void onDropViewInstance(@NonNull AdsVideoView view) { view.release(); super.onDropViewInstance(view); }
     @Override public Map getExportedCustomDirectEventTypeConstants() {
         return MapBuilder.of(

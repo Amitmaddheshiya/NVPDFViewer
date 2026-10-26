@@ -85,6 +85,7 @@ class CmsHttpServer extends NanoHTTPD {
             if ("/api/storage/upload".equals(uri) && Method.POST.equals(session.getMethod())) return cors(storageUpload(session));
             if ("/api/storage/move".equals(uri) && Method.POST.equals(session.getMethod())) return cors(storageMove(session));
             if ("/api/command".equals(uri) && Method.POST.equals(session.getMethod())) return cors(command(session));
+            if ("/api/reload".equals(uri) && Method.POST.equals(session.getMethod())) return cors(reloadApp(session));
             return cors(json(Response.Status.NOT_FOUND, "{\"error\":\"Not found\"}"));
         } catch (Exception error) {
             return cors(json(Response.Status.INTERNAL_ERROR, "{\"error\":\"" + escape(error.getMessage()) + "\"}"));
@@ -360,6 +361,15 @@ class CmsHttpServer extends NanoHTTPD {
         event.put("id", UUID.randomUUID().toString());
         event.put("type", type);
         event.put("payload", body.optJSONObject("payload") == null ? new JSONObject() : body.getJSONObject("payload"));
+        return dispatch(event, 5, "{}");
+    }
+
+    private Response reloadApp(IHTTPSession session) throws Exception {
+        if (!authorized(session)) return json(Response.Status.UNAUTHORIZED, "{\"error\":\"Please login again\"}");
+        JSONObject event = new JSONObject();
+        event.put("id", UUID.randomUUID().toString());
+        event.put("type", "reloadApp");
+        event.put("payload", new JSONObject());
         return dispatch(event, 5, "{}");
     }
 

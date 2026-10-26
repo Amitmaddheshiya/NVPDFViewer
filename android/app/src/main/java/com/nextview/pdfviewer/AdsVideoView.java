@@ -1,5 +1,6 @@
 package com.nextview.pdfviewer;
 
+import android.content.Context;
 import android.media.MediaPlayer;
 import android.net.Uri;
 import android.view.Gravity;
@@ -15,13 +16,17 @@ public class AdsVideoView extends FrameLayout {
     private final VideoView video;
     private String source;
     private boolean muted;
+    private int rotation = 0;
 
     public AdsVideoView(ReactContext context) {
         super(context);
         // The React layer keeps the previous ad behind this view until this
         // player is prepared, so this container must stay transparent.
         setBackgroundColor(0x00000000);
-        video = new VideoView(context);
+        // Android's stock VideoView may preserve the source aspect ratio and
+        // leave bars. Ads mode is explicitly full-screen stretch, including
+        // after a 90/270-degree stage rotation.
+        video = new StretchVideoView(context);
         addView(video, new FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT, Gravity.CENTER));
         video.setOnCompletionListener(player -> emit("onAdComplete"));
         video.setOnErrorListener((player, what, extra) -> { emit("onAdError"); return true; });
@@ -45,7 +50,48 @@ public class AdsVideoView extends FrameLayout {
         this.muted = muted;
     }
 
+    public void setRotation(int rotation) {
+        this.rotation = rotation;
+        video.setRotation(rotation);
+        // For 90/270 degree rotations, we need to adjust the VideoView dimensions
+        // to match the rotated layout. The parent container handles the stage rotation.
+        post(() -> {
+            if (rotation == 90 || rotation == 270) {
+                // Swap dimensions for quarter turns
+                int width = getWidth();
+                int height = getHeight();
+                FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) video.getLayoutParams();
+                params.width = height;
+                params.height = width;
+                video.setLayoutParams(params);
+                // Set pivot to center
+                video.setPivotX(height / 2f);
+                video.setPivotY(width / 2f);
+            } else {
+                // Reset dimensions for 0/180 degree rotations
+                FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) video.getLayoutParams();
+                params.width = LayoutParams.MATCH_PARENT;
+                params.height = LayoutParams.MATCH_PARENT;
+                video.setLayoutParams(params);
+                video.setPivotX(getWidth() / 2f);
+                video.setPivotY(getHeight() / 2f);
+            }
+        });
+    }
+
     public void release() { video.stopPlayback(); }
+
+    private static class StretchVideoView extends VideoView {
+        StretchVideoView(Context context) { super(context); }
+
+        @Override
+        protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+            setMeasuredDimension(
+                    MeasureSpec.getSize(widthMeasureSpec),
+                    MeasureSpec.getSize(heightMeasureSpec)
+            );
+        }
+    }
 
     private void emit(String event) {
         ((ReactContext) getContext()).getJSModule(RCTEventEmitter.class).receiveEvent(getId(), event, null);

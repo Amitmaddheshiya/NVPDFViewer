@@ -14,6 +14,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
   requireNativeComponent,
 } from 'react-native';
@@ -24,6 +25,7 @@ const AdsVideoView = requireNativeComponent('AdsVideoView');
 const fileNameFromUri = (uri) => decodeURIComponent(uri.split('/').pop() || 'PDF document');
 
 function App() {
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const [playlist, setPlaylist] = useState([]);
   const [documentIndex, setDocumentIndex] = useState(0);
   const [pdfUri, setPdfUri] = useState(null);
@@ -511,6 +513,15 @@ function App() {
         if (!FilePickerModule?.clearCmsAds) throw new Error('TV Ads storage is unavailable in this build.');
         await FilePickerModule.clearCmsAds();
         await stopAds(false);
+      } else if (type === 'reloadApp') {
+        // Reload the app by reloading the React Native bundle
+        if (typeof __DEV__ !== 'undefined' && __DEV__) {
+          // In development, just reload the bundle
+          location.reload();
+        } else {
+          // In production, restart the activity
+          BackHandler.exitApp();
+        }
       } else {
         throw new Error('This command is unavailable because no PDF is open.');
       }
@@ -678,24 +689,59 @@ function App() {
   }
 
   if (adsActive) {
+    if (!adsPlaylist.length) {
+      return (
+        <View style={styles.adsScreen}>
+          <View style={styles.emptyAdsContainer}>
+            <Text style={styles.emptyAdsTitle}>No Ads Found</Text>
+            <Text style={styles.emptyAdsText}>To display ads, please follow these steps:</Text>
+            <Text style={styles.emptyAdsBullet}>• Connect a USB drive to your TV</Text>
+            <Text style={styles.emptyAdsBullet}>• Create a folder named "Ads" on the USB drive</Text>
+            <Text style={styles.emptyAdsBullet}>• Add images, videos, or PDF files to the Ads folder</Text>
+            <Text style={styles.emptyAdsBullet}>• The app will automatically detect and play the ads</Text>
+            <TouchableOpacity
+              style={styles.emptyAdsButton}
+              onPress={() => stopAds()}>
+              <Text style={styles.emptyAdsButtonText}>Return to Home</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      );
+    }
     const currentAd = adsPlaylist[adsIndex];
-    const adsRotationStyle = adsRotation ? { transform: [{ rotate: `${adsRotation}deg` }] } : null;
+    // Match the NVA Player's rotation strategy: for 90/270 degrees the
+    // entire media stage swaps its dimensions before rotation. Rotating only
+    // a VideoView leaves a landscape surface clipped inside its old bounds.
+    const isQuarterTurn = adsRotation === 90 || adsRotation === 270;
+    const stageWidth = isQuarterTurn ? screenHeight : screenWidth;
+    const stageHeight = isQuarterTurn ? screenWidth : screenHeight;
+    const adsStageRotation = {
+      width: stageWidth,
+      height: stageHeight,
+      position: 'absolute',
+      top: (screenHeight - stageHeight) / 2,
+      left: (screenWidth - stageWidth) / 2,
+      transform: adsRotation ? [{ rotate: `${adsRotation}deg` }] : [],
+    };
     return (
       <View style={styles.adsScreen}>
-        {currentAd?.type === 'video' ? (
-          <>
-            {adsImage ? <Image source={{ uri: adsImage }} style={[styles.adsMedia, styles.adsBackdrop, adsRotationStyle]} resizeMode="stretch" /> : null}
-            <AdsVideoView
-              key={`${currentAd.uri}-${adsCycle}`}
-              style={[styles.adsMedia, styles.adsVideoLayer, adsRotationStyle, !adsVideoReady && styles.adsVideoHidden]}
-              source={currentAd.uri}
-              muted={false}
-              onAdReady={() => setAdsVideoReady(true)}
-              onAdComplete={() => adsNextRef.current?.()}
-              onAdError={() => adsNextRef.current?.()}
-            />
-          </>
-        ) : adsImage ? <Image source={{ uri: adsImage }} style={[styles.adsMedia, adsRotationStyle]} resizeMode="stretch" /> : null}
+        <View style={[styles.adsStage, adsStageRotation]}>
+          {currentAd?.type === 'video' ? (
+            <>
+              {adsImage ? <Image source={{ uri: adsImage }} style={[styles.adsMedia, styles.adsBackdrop]} resizeMode="stretch" /> : null}
+              <AdsVideoView
+                key={`${currentAd.uri}-${adsCycle}`}
+                style={[styles.adsMedia, styles.adsVideoLayer, !adsVideoReady && styles.adsVideoHidden]}
+                source={currentAd.uri}
+                muted={false}
+                rotation={adsRotation}
+                onAdReady={() => setAdsVideoReady(true)}
+                onAdComplete={() => adsNextRef.current?.()}
+                onAdError={() => adsNextRef.current?.()}
+              />
+            </>
+          ) : adsImage ? <Image source={{ uri: adsImage }} style={styles.adsMedia} resizeMode="stretch" /> : null}
+        </View>
       </View>
     );
   }
@@ -765,31 +811,43 @@ function App() {
     );
   }
 
+  const isLandscape = screenWidth > screenHeight;
+
   return (
     <View style={styles.container}>
-      <View style={styles.content}>
-        <Text style={styles.title}>NV PDF Viewer</Text>
-        <Text style={styles.subtitle}>Select one or more PDF files</Text>
-        <TouchableOpacity
-          accessible={true}
-          accessibilityLabel="Open PDF playlist"
-          hasTVPreferredFocus={homeFocused === 'pdf'}
-          focusable={true}
-          style={[styles.button, homeFocused === 'pdf' && styles.buttonFocused]}
-          onFocus={() => setHomeFocused('pdf')}
-          onPress={openPdfs}>
-          <Text style={styles.buttonText}>Open PDFs</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          accessible={true}
-          accessibilityLabel="Start Ads scan"
-          hasTVPreferredFocus={homeFocused === 'ads'}
-          focusable={true}
-          style={[styles.button, styles.adsStartButton, homeFocused === 'ads' && styles.buttonFocused]}
-          onFocus={() => setHomeFocused('ads')}
-          onPress={() => chooseUsbAdsFolder().catch((error) => Alert.alert('USB Ads', error.message || 'Could not read USB Ads folder.'))}>
-          <Text style={styles.buttonText}>Ads</Text>
-        </TouchableOpacity>
+      <View style={[styles.content, isLandscape && styles.contentLandscape]}>
+        <View style={[styles.homeMainSection, isLandscape && styles.homeMainSectionLandscape]}>
+          {/* <Text style={[styles.title, isLandscape && styles.titleLandscape]}>NV PDF Viewer</Text> */}
+          <Text style={[styles.subtitle, isLandscape && styles.subtitleLandscape]}>Select one or more PDF files</Text>
+          {cmsQr ? (
+            <View style={[styles.homeQrBlock, isLandscape && styles.homeQrBlockLandscape]}>
+              <Image source={{ uri: cmsQr.base64 }} style={[styles.homeQr, isLandscape && styles.homeQrLandscape]} />
+              <Text style={styles.homeTvIp}>{cmsQr.url}</Text>
+            </View>
+          ) : null}
+        </View>
+        <View style={[styles.homeButtonSection, isLandscape && styles.homeButtonSectionLandscape]}>
+          <TouchableOpacity
+            accessible={true}
+            accessibilityLabel="Open PDF playlist"
+            hasTVPreferredFocus={homeFocused === 'pdf'}
+            focusable={true}
+            style={[styles.button, homeFocused === 'pdf' && styles.buttonFocused, isLandscape && styles.buttonLandscape]}
+            onFocus={() => setHomeFocused('pdf')}
+            onPress={openPdfs}>
+            <Text style={styles.buttonText}>Open PDFs</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            accessible={true}
+            accessibilityLabel="Start Ads scan"
+            hasTVPreferredFocus={homeFocused === 'ads'}
+            focusable={true}
+            style={[styles.button, styles.adsStartButton, homeFocused === 'ads' && styles.buttonFocused, isLandscape && styles.buttonLandscape]}
+            onFocus={() => setHomeFocused('ads')}
+            onPress={() => chooseUsbAdsFolder().catch((error) => Alert.alert('USB Ads', error.message || 'Could not read USB Ads folder.'))}>
+            <Text style={styles.buttonText}>Ads</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     </View>
   );
@@ -808,14 +866,35 @@ const styles = StyleSheet.create({
   loginTvIp: { color: '#FFD600', fontSize: 16, fontWeight: '700' },
   loginError: { color: '#FF9696', textAlign: 'center', fontSize: 16, marginTop: 14 },
   licenseContact: { color: '#FFD600', textAlign: 'center', fontSize: 17, fontWeight: '700', marginTop: 26, lineHeight: 25 },
+  homeQrBlock: { alignItems: 'center', marginBottom: 30 },
+  homeQr: { width: 150, height: 150, backgroundColor: '#fff', borderRadius: 8, marginBottom: 5 },
+  homeTvIp: { color: '#FFD600', fontSize: 18, fontWeight: '700', letterSpacing: 1, marginTop: 2 },
   content: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  contentLandscape: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingHorizontal: 60 },
+  homeMainSection: { alignItems: 'center' },
+  homeMainSectionLandscape: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  homeButtonSection: { alignItems: 'center' },
+  homeButtonSectionLandscape: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   title: { fontSize: 48, color: '#fff', fontWeight: 'bold', marginBottom: 20 },
+  titleLandscape: { fontSize: 56, marginBottom: 25 },
   subtitle: { fontSize: 24, color: '#ccc', marginBottom: 60 },
+  subtitleLandscape: { fontSize: 28, marginBottom: 40 },
+  homeQrBlockLandscape: { marginBottom: 40 },
+  homeQrLandscape: { width: 180, height: 180 },
   button: { backgroundColor: '#2196F3', paddingVertical: 20, paddingHorizontal: 40, borderRadius: 12, borderWidth: 3, borderColor: 'transparent' },
+  buttonLandscape: { paddingVertical: 25, paddingHorizontal: 50, minWidth: 200 },
   buttonFocused: { borderColor: '#FFD600', backgroundColor: '#0D6EFD', elevation: 12, transform: [{ scale: 1.08 }] },
   buttonText: { color: '#fff', fontSize: 24, fontWeight: 'bold' },
   adsStartButton: { marginTop: 18, backgroundColor: '#00796B' },
+  adsStartButtonLandscape: { marginTop: 0 },
   adsScreen: { flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
+  emptyAdsContainer: { alignItems: 'center', justifyContent: 'center', padding: 40, maxWidth: 700 },
+  emptyAdsTitle: { color: '#fff', fontSize: 42, fontWeight: 'bold', marginBottom: 20, textAlign: 'center' },
+  emptyAdsText: { color: '#ccc', fontSize: 22, marginBottom: 25, textAlign: 'center' },
+  emptyAdsBullet: { color: '#ddd', fontSize: 20, marginBottom: 12, lineHeight: 28 },
+  emptyAdsButton: { backgroundColor: '#0D6EFD', paddingVertical: 18, paddingHorizontal: 40, borderRadius: 12, borderWidth: 3, borderColor: '#FFD600', marginTop: 30 },
+  emptyAdsButtonText: { color: '#fff', fontSize: 22, fontWeight: 'bold' },
+  adsStage: { position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' },
   adsMedia: { width: '100%', height: '100%' },
   adsBackdrop: { position: 'absolute', top: 0, left: 0 },
   adsVideoLayer: { position: 'absolute', top: 0, left: 0 },
