@@ -8,12 +8,18 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <!-- Start the TV viewer after a device reboot. The receiver makes a
+         best-effort launch of Tailscale first, then returns to this app. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Needed for hands-free USB Ads scanning on Android 11+ TV devices. The
          system settings page asks the owner to grant this manually. -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <!-- Lets Android deliver the physical pendrive-attach intent directly to
+         the viewer activity, even before its storage volume is mounted. -->
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
 
     <application
       android:name=".MainApplication"
@@ -24,8 +30,36 @@
       android:theme="@style/AppTheme"
       android:supportsRtl="true"
       android:usesCleartextTraffic="true"
+      android:directBootAware="true"
       android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
       android:banner="@drawable/tv_banner">
+
+      <receiver
+        android:name=".BootReceiver"
+        android:directBootAware="true"
+        android:enabled="true"
+        android:exported="true">
+        <intent-filter>
+          <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+          <action android:name="android.intent.action.BOOT_COMPLETED" />
+          <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+          <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+          <action android:name="android.intent.action.REBOOT" />
+          <action android:name="android.intent.action.USER_UNLOCKED" />
+          <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+        </intent-filter>
+      </receiver>
+
+      <receiver
+        android:name=".UsbMountReceiver"
+        android:enabled="true"
+        android:exported="true">
+        <intent-filter>
+          <action android:name="android.intent.action.MEDIA_CHECKING" />
+          <action android:name="android.intent.action.MEDIA_MOUNTED" />
+          <data android:scheme="file" />
+        </intent-filter>
+      </receiver>
 
       <activity
         android:name=".MainActivity"
@@ -34,12 +68,31 @@
         android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
         android:windowSoftInputMode="adjustResize"
         android:exported="true"
+        android:directBootAware="true"
         android:launchMode="singleTask">
 
         <intent-filter>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
             <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+        </intent-filter>
+
+        <!-- Some TV firmware does not emit MEDIA_MOUNTED to third-party
+             receivers. This USB-host filter opens the app at the earlier
+             physical-attach stage for standard USB mass-storage pendrives. -->
+        <intent-filter>
+            <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+        </intent-filter>
+        <meta-data
+            android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
+            android:resource="@xml/usb_device_filter" />
+
+        <!-- Optional TV kiosk/default-home mode. Selecting NV PDF Viewer as
+             the Home app makes the TV launcher open it after every boot. -->
+        <intent-filter>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.HOME" />
+            <category android:name="android.intent.category.DEFAULT" />
         </intent-filter>
       </activity>
     </application>

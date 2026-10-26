@@ -46,6 +46,7 @@ public class FilePickerModule extends ReactContextBaseJavaModule implements Acti
     private static final int PICK_ADS_FOLDER_REQUEST = 1002;
     private static final String ADS_PREFS = "usb_ads";
     private static final String ADS_TREE_URI = "ads_tree_uri";
+    private static final String CMS_ADS_DIRECTORY = "cms-ads";
     private Promise mPickerPromise;
     private Promise mAdsFolderPromise;
     private BroadcastReceiver usbReceiver;
@@ -54,6 +55,7 @@ public class FilePickerModule extends ReactContextBaseJavaModule implements Acti
         super(reactContext);
         reactContext.addActivityEventListener(this);
         registerUsbReceiver();
+        ensurePublicAdsDirectory();
     }
 
     private void registerUsbReceiver() {
@@ -142,7 +144,11 @@ public class FilePickerModule extends ReactContextBaseJavaModule implements Acti
                         "android.permission.READ_MEDIA_VIDEO"
                 }, 2001);
             }
-            if (hasUsbStorageAccess()) { promise.resolve(true); return; }
+            if (hasUsbStorageAccess()) {
+                ensurePublicAdsDirectory();
+                promise.resolve(true);
+                return;
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 try {
                     activity.startActivity(new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
@@ -175,6 +181,12 @@ public class FilePickerModule extends ReactContextBaseJavaModule implements Acti
         } catch (Exception ignored) {
             // MediaStore and document-tree fallbacks follow below.
         }
+        try {
+            // CMS uploads are app-private TV storage. They are available
+            // offline and need no broad storage permission.
+            List<File> uploadedFiles = scanCmsUploadedAds();
+            if (!uploadedFiles.isEmpty()) { promise.resolve(toAdsArray(uploadedFiles)); return; }
+        } catch (Exception ignored) { }
         try {
             List<AdEntry> mediaStoreFiles = scanMediaStoreAds();
             if (!mediaStoreFiles.isEmpty()) { promise.resolve(toAdsEntryArray(mediaStoreFiles)); return; }
@@ -237,12 +249,56 @@ public class FilePickerModule extends ReactContextBaseJavaModule implements Acti
      * as /sdcard/Ads). It is deliberately checked only after all USB volumes. */
     private List<File> scanInternalStorageAds() {
         if (!hasUsbStorageAccess()) return Collections.emptyList();
-        File ads = findAdsDirectory(Environment.getExternalStorageDirectory());
+        File ads = ensurePublicAdsDirectory();
         if (!ads.isDirectory() || !ads.canRead()) return Collections.emptyList();
         List<File> output = new ArrayList<>();
         collectRawAdFiles(ads, output);
         Collections.sort(output, Comparator.comparing(file -> file.getName().toLowerCase()));
         return output;
+    }
+
+    /** Creates /storage/emulated/0/Ads for CMS uploads and manual TV Ads.
+     * Android 11+ permits this only after the owner has granted All files
+     * access; scanning retries after that approval automatically. */
+    private File ensurePublicAdsDirectory() {
+        File ads = new File(Environment.getExternalStorageDirectory(), "Ads");
+        if (hasUsbStorageAccess() && !ads.exists()) ads.mkdirs();
+        return ads;
+    }
+
+    private List<File> scanCmsUploadedAds() {
+        File directory = new File(getReactApplicationContext().getFilesDir(), CMS_ADS_DIRECTORY);
+        if (!directory.isDirectory() || !directory.canRead()) return Collections.emptyList();
+        List<File> output = new ArrayList<>();
+        collectRawAdFiles(directory, output);
+        Collections.sort(output, Comparator.comparing(file -> file.getName().toLowerCase()));
+        return output;
+    }
+
+    @ReactMethod
+    public void clearCmsAds(Promise promise) {
+        try {
+            if (!hasUsbStorageAccess()) {
+                throw new IOException("Allow All files access for NV PDF Viewer on the TV, then try again.");
+            }
+            // CMS uploads are marked in public main storage. Leave manually
+            // copied Ads untouched when the CMS operator clears its uploads.
+            File publicAdsDirectory = new File(Environment.getExternalStorageDirectory(), "Ads");
+            File[] publicFiles = publicAdsDirectory.listFiles();
+            if (publicFiles != null) for (File file : publicFiles)
+                if (file.isFile() && file.getName().startsWith("cms-") && !file.delete())
+                    throw new IOException("Could not delete " + file.getName());
+
+            // Remove legacy app-private CMS Ads from builds released before
+            // uploads were moved to TV main storage.
+            File directory = new File(getReactApplicationContext().getFilesDir(), CMS_ADS_DIRECTORY);
+            File[] files = directory.listFiles();
+            if (files != null) for (File file : files)
+                if (!file.delete()) throw new IOException("Could not delete " + file.getName());
+            promise.resolve(null);
+        } catch (Exception error) {
+            promise.reject("CLEAR_ADS_ERROR", error.getMessage(), error);
+        }
     }
 
     private void addVolumeChildren(Set<File> output, File parent) {

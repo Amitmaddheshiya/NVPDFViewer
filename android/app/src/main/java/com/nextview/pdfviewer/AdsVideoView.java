@@ -14,14 +14,22 @@ import com.facebook.react.uimanager.events.RCTEventEmitter;
 public class AdsVideoView extends FrameLayout {
     private final VideoView video;
     private String source;
+    private boolean muted;
 
     public AdsVideoView(ReactContext context) {
         super(context);
-        setBackgroundColor(0xFF000000);
+        // The React layer keeps the previous ad behind this view until this
+        // player is prepared, so this container must stay transparent.
+        setBackgroundColor(0x00000000);
         video = new VideoView(context);
         addView(video, new FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT, Gravity.CENTER));
         video.setOnCompletionListener(player -> emit("onAdComplete"));
         video.setOnErrorListener((player, what, extra) -> { emit("onAdError"); return true; });
+        video.setOnPreparedListener(player -> {
+            player.setVolume(muted ? 0f : 1f, muted ? 0f : 1f);
+            player.start();
+            emit("onAdReady");
+        });
     }
 
     public void setSource(String value) {
@@ -34,10 +42,7 @@ public class AdsVideoView extends FrameLayout {
     }
 
     public void setMuted(boolean muted) {
-        video.setOnPreparedListener(player -> {
-            player.setVolume(muted ? 0f : 1f, muted ? 0f : 1f);
-            player.start();
-        });
+        this.muted = muted;
     }
 
     public void release() { video.stopPlayback(); }

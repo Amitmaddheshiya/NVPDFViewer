@@ -128,7 +128,7 @@ public class CmsServerModule extends ReactContextBaseJavaModule {
 
     private String createSession(String password) {
         try {
-            if (!loginPassword().equals(password)) return null;
+            if (!isLoginPasswordValid(password)) return null;
         } catch (IOException error) {
             return null;
         }
@@ -236,22 +236,7 @@ public class CmsServerModule extends ReactContextBaseJavaModule {
     @ReactMethod
     public void validateLogin(String password, Promise promise) {
         try {
-            String enteredPassword = password == null ? "" : password;
-            android.content.SharedPreferences prefs = reactContext
-                    .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-            String savedPassword = prefs.getString(APP_LOGIN_PASSWORD_KEY, null);
-
-            // The first app login must still use the password derived from the
-            // current TV IP. Once it succeeds, retain exactly that code so a
-            // later DHCP/IP-address change cannot lock the user out.
-            if (savedPassword != null) {
-                promise.resolve(savedPassword.equals(enteredPassword));
-                return;
-            }
-
-            boolean valid = loginPassword().equals(enteredPassword);
-            if (valid) prefs.edit().putString(APP_LOGIN_PASSWORD_KEY, enteredPassword).apply();
-            promise.resolve(valid);
+            promise.resolve(isLoginPasswordValid(password));
         } catch (Exception error) {
             promise.reject("LOGIN_ERROR", error.getMessage(), error);
         }
@@ -267,6 +252,21 @@ public class CmsServerModule extends ReactContextBaseJavaModule {
         } catch (Exception error) {
             promise.reject("LOGIN_PASSWORD_ERROR", error.getMessage(), error);
         }
+    }
+
+    private boolean isLoginPasswordValid(String password) throws IOException {
+        String enteredPassword = password == null ? "" : password;
+        android.content.SharedPreferences prefs = reactContext
+                .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        String savedPassword = prefs.getString(APP_LOGIN_PASSWORD_KEY, null);
+
+        // The first login uses the current TV IP-derived code. Both the TV UI
+        // and browser CMS then retain that same code for future logins.
+        if (savedPassword != null) return savedPassword.equals(enteredPassword);
+
+        boolean valid = loginPassword().equals(enteredPassword);
+        if (valid) prefs.edit().putString(APP_LOGIN_PASSWORD_KEY, enteredPassword).apply();
+        return valid;
     }
 
     private String loginPassword() throws IOException {

@@ -3,8 +3,11 @@ package com.nextview.pdfviewer;
 import android.net.Uri;
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.os.Build;
+import android.os.Environment;
 
 import org.json.JSONObject;
+import org.json.JSONArray;
 import fi.iki.elonen.NanoHTTPD;
 
 import java.io.File;
@@ -15,6 +18,8 @@ import java.nio.file.Files;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -73,6 +78,12 @@ class CmsHttpServer extends NanoHTTPD {
                 return cors(json(Response.Status.OK, stateJson));
             }
             if ("/api/upload".equals(uri) && Method.POST.equals(session.getMethod())) return cors(upload(session));
+            if ("/api/ads-upload".equals(uri) && Method.POST.equals(session.getMethod())) return cors(uploadAds(session));
+            if ("/api/storage/list".equals(uri) && Method.GET.equals(session.getMethod())) return cors(storageList(session));
+            if ("/api/storage/folder".equals(uri) && Method.POST.equals(session.getMethod())) return cors(storageFolder(session));
+            if ("/api/storage/file".equals(uri) && Method.POST.equals(session.getMethod())) return cors(storageFile(session));
+            if ("/api/storage/upload".equals(uri) && Method.POST.equals(session.getMethod())) return cors(storageUpload(session));
+            if ("/api/storage/move".equals(uri) && Method.POST.equals(session.getMethod())) return cors(storageMove(session));
             if ("/api/command".equals(uri) && Method.POST.equals(session.getMethod())) return cors(command(session));
             return cors(json(Response.Status.NOT_FOUND, "{\"error\":\"Not found\"}"));
         } catch (Exception error) {
@@ -91,7 +102,10 @@ class CmsHttpServer extends NanoHTTPD {
         }
         String safeName = requestedName.replaceAll("[^a-zA-Z0-9._ -]", "_");
         File destination = new File(uploadDirectory, UUID.randomUUID() + "-" + safeName);
-        Files.move(new File(temporaryPath).toPath(), destination.toPath());
+        // Copy then delete keeps the upload robust even if NanoHTTPD's
+        // temporary file lives on a different Android filesystem provider.
+        Files.copy(new File(temporaryPath).toPath(), destination.toPath());
+        Files.deleteIfExists(new File(temporaryPath).toPath());
         JSONObject payload = new JSONObject();
         payload.put("uri", Uri.fromFile(destination).toString());
         payload.put("name", safeName);
@@ -102,13 +116,244 @@ class CmsHttpServer extends NanoHTTPD {
         return dispatch(event, 12, "{\"name\":\"" + escape(safeName) + "\"}");
     }
 
+    private Response uploadAds(IHTTPSession session) throws Exception {
+        Map<String, String> files = new HashMap<>();
+        session.parseBody(files);
+        if (!authorized(session)) return json(Response.Status.UNAUTHORIZED, "{\"error\":\"Please login again\"}");
+        String temporaryPath = files.get("file");
+        String requestedName = session.getParms().get("filename");
+        if (temporaryPath == null || requestedName == null || !isSupportedAdName(requestedName)) {
+            return json(Response.Status.BAD_REQUEST, "{\"error\":\"Upload a PDF, image, or supported video file\"}");
+        }
+        File directory = publicAdsDirectory();
+        if (!directory.exists() && !directory.mkdirs()) {
+            return json(Response.Status.INTERNAL_ERROR, "{\"error\":\"Could not create TV Ads storage\"}");
+        }
+        String safeName = requestedName.replaceAll("[^a-zA-Z0-9._ -]", "_");
+        // The marker lets Clear TV Ads remove only CMS uploads without
+        // deleting any files the owner manually put in the public Ads folder.
+        File destination = new File(directory, "cms-" + UUID.randomUUID() + "-" + safeName);
+        // The temporary upload lives in app-private storage while this target
+        // is public TV main storage, so use cross-filesystem-safe copy/delete.
+        Files.copy(new File(temporaryPath).toPath(), destination.toPath());
+        Files.deleteIfExists(new File(temporaryPath).toPath());
+        JSONObject payload = new JSONObject();
+        payload.put("uri", Uri.fromFile(destination).toString());
+        payload.put("name", safeName);
+        JSONObject event = new JSONObject();
+        event.put("id", UUID.randomUUID().toString());
+        event.put("type", "uploadAds");
+        event.put("payload", payload);
+        return dispatch(event, 15, "{\"name\":\"" + escape(safeName) + "\"}");
+    }
+
+    private boolean isSupportedAdName(String name) {
+        String lower = name.toLowerCase();
+        return lower.endsWith(".pdf") || lower.endsWith(".jpg") || lower.endsWith(".jpeg")
+                || lower.endsWith(".png") || lower.endsWith(".webp") || lower.endsWith(".gif")
+                || lower.endsWith(".bmp") || lower.endsWith(".heic") || lower.endsWith(".mp4")
+                || lower.endsWith(".m4v") || lower.endsWith(".webm") || lower.endsWith(".3gp")
+                || lower.endsWith(".mkv") || lower.endsWith(".avi") || lower.endsWith(".mov")
+                || lower.endsWith(".mpeg") || lower.endsWith(".ts");
+    }
+
+    private File publicAdsDirectory() throws IOException {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
+            throw new IOException("Allow All files access for NV PDF Viewer on the TV, then upload Ads again.");
+        }
+        return new File(Environment.getExternalStorageDirectory(), "Ads");
+    }
+
+    /** Main TV shared-storage browser used by the authenticated CMS. Every
+     * request is resolved below this root; canonical path checking prevents
+     * paths such as ../ from reaching private app or system directories. */
+    private File storageRoot() throws IOException {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
+            throw new IOException("Allow All files access for NV PDF Viewer on the TV, then use Storage Manager again.");
+        }
+        File root = Environment.getExternalStorageDirectory().getCanonicalFile();
+        if (!root.exists() && !root.mkdirs()) throw new IOException("TV main storage is unavailable.");
+        return root;
+    }
+
+    private File storagePath(String relativePath, boolean allowRoot) throws IOException {
+        File root = storageRoot();
+        String relative = relativePath == null ? "" : relativePath.trim().replace('\\', '/');
+        while (relative.startsWith("/")) relative = relative.substring(1);
+        File target = relative.isEmpty() ? root : new File(root, relative);
+        File canonical = target.getCanonicalFile();
+        String rootPath = root.getPath();
+        if (!canonical.getPath().equals(rootPath) && !canonical.getPath().startsWith(rootPath + File.separator)) {
+            throw new IOException("Invalid storage path.");
+        }
+        if (!allowRoot && canonical.equals(root)) throw new IOException("TV storage root cannot be changed.");
+        return canonical;
+    }
+
+    private String storageRelativePath(File file) throws IOException {
+        File root = storageRoot();
+        String rootPath = root.getPath();
+        String filePath = file.getCanonicalPath();
+        if (filePath.equals(rootPath)) return "";
+        return filePath.substring(rootPath.length() + 1).replace(File.separatorChar, '/');
+    }
+
+    private String safeStorageName(String value) throws IOException {
+        String name = value == null ? "" : value.trim();
+        if (name.isEmpty() || ".".equals(name) || "..".equals(name)
+                || name.indexOf('/') >= 0 || name.indexOf('\\') >= 0 || name.indexOf('\u0000') >= 0) {
+            throw new IOException("Enter a valid name without / or \\.");
+        }
+        return name;
+    }
+
+    private Response storageList(IHTTPSession session) throws Exception {
+        if (!authorized(session)) return json(Response.Status.UNAUTHORIZED, "{\"error\":\"Please login again\"}");
+        File directory = storagePath(session.getParms().get("path"), true);
+        if (!directory.exists() || !directory.isDirectory()) return json(Response.Status.NOT_FOUND, "{\"error\":\"Folder not found\"}");
+        File[] entries = directory.listFiles();
+        if (entries == null) entries = new File[0];
+        Arrays.sort(entries, Comparator.comparing(File::isFile).thenComparing(file -> file.getName().toLowerCase()));
+        JSONArray items = new JSONArray();
+        int limit = Math.min(entries.length, 500);
+        for (int index = 0; index < limit; index++) {
+            File entry = entries[index];
+            JSONObject item = new JSONObject();
+            item.put("name", entry.getName());
+            item.put("path", storageRelativePath(entry));
+            item.put("folder", entry.isDirectory());
+            item.put("size", entry.isFile() ? entry.length() : 0);
+            item.put("modified", entry.lastModified());
+            items.put(item);
+        }
+        JSONObject result = new JSONObject();
+        result.put("path", storageRelativePath(directory));
+        result.put("items", items);
+        result.put("truncated", entries.length > limit);
+        return json(Response.Status.OK, result.toString());
+    }
+
+    private JSONObject requestBody(IHTTPSession session) throws Exception {
+        Map<String, String> files = new HashMap<>();
+        session.parseBody(files);
+        return new JSONObject(files.getOrDefault("postData", "{}"));
+    }
+
+    private Response storageFolder(IHTTPSession session) throws Exception {
+        if (!authorized(session)) return json(Response.Status.UNAUTHORIZED, "{\"error\":\"Please login again\"}");
+        JSONObject body = requestBody(session);
+        String action = body.optString("action");
+        if ("create".equals(action)) {
+            File parent = storagePath(body.optString("path"), true);
+            if (!parent.isDirectory()) throw new IOException("Choose an existing folder.");
+            File folder = new File(parent, safeStorageName(body.optString("name")));
+            if (folder.exists()) throw new IOException("A file or folder with that name already exists.");
+            if (!folder.mkdir()) throw new IOException("Could not create folder.");
+            notifyAdsStorageChange(folder);
+        } else if ("rename".equals(action)) {
+            renameStorageItem(body.optString("path"), body.optString("name"));
+        } else if ("delete".equals(action)) {
+            deleteStorageItem(body.optString("path"));
+        } else return json(Response.Status.BAD_REQUEST, "{\"error\":\"Unsupported folder action\"}");
+        return json(Response.Status.OK, "{\"ok\":true}");
+    }
+
+    private Response storageFile(IHTTPSession session) throws Exception {
+        if (!authorized(session)) return json(Response.Status.UNAUTHORIZED, "{\"error\":\"Please login again\"}");
+        JSONObject body = requestBody(session);
+        String action = body.optString("action");
+        if ("rename".equals(action)) renameStorageItem(body.optString("path"), body.optString("name"));
+        else if ("delete".equals(action)) deleteStorageItem(body.optString("path"));
+        else return json(Response.Status.BAD_REQUEST, "{\"error\":\"Unsupported file action\"}");
+        return json(Response.Status.OK, "{\"ok\":true}");
+    }
+
+    private Response storageUpload(IHTTPSession session) throws Exception {
+        Map<String, String> files = new HashMap<>();
+        session.parseBody(files);
+        if (!authorized(session)) return json(Response.Status.UNAUTHORIZED, "{\"error\":\"Please login again\"}");
+        String temporaryPath = files.get("file");
+        String requestedName = session.getParms().get("filename");
+        File directory = storagePath(session.getParms().get("path"), true);
+        if (temporaryPath == null || !directory.isDirectory()) throw new IOException("Choose an existing destination folder and file.");
+        File destination = new File(directory, safeStorageName(requestedName));
+        if (destination.exists()) throw new IOException("A file or folder with that name already exists.");
+        Files.copy(new File(temporaryPath).toPath(), destination.toPath());
+        Files.deleteIfExists(new File(temporaryPath).toPath());
+        notifyAdsStorageChange(destination);
+        return json(Response.Status.OK, "{\"ok\":true,\"path\":\"" + escape(storageRelativePath(destination)) + "\"}");
+    }
+
+    private Response storageMove(IHTTPSession session) throws Exception {
+        if (!authorized(session)) return json(Response.Status.UNAUTHORIZED, "{\"error\":\"Please login again\"}");
+        JSONObject body = requestBody(session);
+        File source = storagePath(body.optString("sourcePath"), false);
+        File destinationFolder = storagePath(body.optString("targetPath"), true);
+        if (!source.exists()) throw new IOException("Source file or folder was not found.");
+        if (!destinationFolder.isDirectory()) throw new IOException("Choose an existing destination folder.");
+        if (source.isDirectory() && destinationFolder.getCanonicalPath().startsWith(source.getCanonicalPath() + File.separator)) {
+            throw new IOException("A folder cannot be moved inside itself.");
+        }
+        File destination = new File(destinationFolder, source.getName()).getCanonicalFile();
+        if (destination.exists()) throw new IOException("Destination already has a file or folder with that name.");
+        boolean adsChanged = isAdsPath(source) || isAdsPath(destination);
+        if (!source.renameTo(destination)) throw new IOException("Could not move item.");
+        if (adsChanged) notifyAdsStorageChange(new File(storageRoot(), "Ads"));
+        return json(Response.Status.OK, "{\"ok\":true}");
+    }
+
+    private void renameStorageItem(String path, String newName) throws Exception {
+        File item = storagePath(path, false);
+        if (!item.exists()) throw new IOException("File or folder not found.");
+        File renamed = new File(item.getParentFile(), safeStorageName(newName));
+        if (renamed.exists()) throw new IOException("A file or folder with that name already exists.");
+        if (!item.renameTo(renamed)) throw new IOException("Could not rename item.");
+        notifyAdsStorageChange(renamed);
+    }
+
+    private void deleteStorageItem(String path) throws Exception {
+        File item = storagePath(path, false);
+        if (!item.exists()) throw new IOException("File or folder not found.");
+        boolean adsChanged = isAdsPath(item);
+        deleteRecursively(item);
+        if (adsChanged) notifyAdsStorageChange(new File(storageRoot(), "Ads"));
+    }
+
+    private void deleteRecursively(File item) throws IOException {
+        if (item.isDirectory()) {
+            File[] children = item.listFiles();
+            if (children != null) for (File child : children) deleteRecursively(child);
+        }
+        if (!item.delete()) throw new IOException("Could not delete " + item.getName() + ".");
+    }
+
+    private boolean isAdsPath(File item) throws IOException {
+        File ads = new File(storageRoot(), "Ads").getCanonicalFile();
+        String adsPath = ads.getPath();
+        String itemPath = item.getCanonicalPath();
+        return itemPath.equals(adsPath) || itemPath.startsWith(adsPath + File.separator);
+    }
+
+    private void notifyAdsStorageChange(File item) {
+        try {
+            if (!isAdsPath(item) || commandListener == null) return;
+            JSONObject payload = new JSONObject();
+            payload.put("uri", Uri.fromFile(item).toString());
+            JSONObject event = new JSONObject();
+            event.put("id", UUID.randomUUID().toString());
+            event.put("type", "uploadAds");
+            event.put("payload", payload);
+            commandListener.onCommand(event);
+        } catch (Exception ignored) { }
+    }
+
     private Response command(IHTTPSession session) throws Exception {
         Map<String, String> files = new HashMap<>();
         session.parseBody(files);
         JSONObject body = new JSONObject(files.getOrDefault("postData", "{}"));
         if (!authorized(session)) return json(Response.Status.UNAUTHORIZED, "{\"error\":\"Please login again\"}");
         String type = body.optString("type");
-        if (!type.matches("previous|next|rotate|fullscreen|close|timer|timerSeconds|clearLibrary|openPdf|adsScan|adsStart|adsStop|adsNext|adsPrevious|adsSeconds")) {
+        if (!type.matches("previous|next|rotate|fullscreen|close|timer|timerSeconds|clearLibrary|openPdf|adsScan|adsStart|adsStop|adsNext|adsPrevious|adsRotate|adsSeconds|clearAds")) {
             return json(Response.Status.BAD_REQUEST, "{\"error\":\"Unsupported command\"}");
         }
         JSONObject event = new JSONObject();

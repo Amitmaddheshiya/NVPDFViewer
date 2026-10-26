@@ -50,7 +50,16 @@ function App() {
   const [adsPdfPage, setAdsPdfPage] = useState(0);
   const [adsPdfPageCount, setAdsPdfPageCount] = useState(0);
   const [adsSeconds, setAdsSeconds] = useState(10);
+  const [adsRotation, setAdsRotation] = useState(0);
   const [adsAutoSuppressed, setAdsAutoSuppressed] = useState(false);
+  // Incremented for every item transition, including a one-item playlist
+  // wrapping from its end back to itself. Native VideoView otherwise ignores
+  // an identical source URI and would stop after the first playback.
+  const [adsCycle, setAdsCycle] = useState(0);
+  // Keep the previous still visible until Android's VideoView has decoded the
+  // first frame of the next video. This prevents the usual black flash between
+  // an image/PDF and a video.
+  const [adsVideoReady, setAdsVideoReady] = useState(false);
   const nextSlideRef = useRef(null);
   const loadDocumentRef = useRef(null);
   const cmsCommandRef = useRef(null);
@@ -81,6 +90,8 @@ function App() {
     if (manual) setAdsAutoSuppressed(true);
     setAdsActive(false);
     setAdsImage(null);
+    setAdsVideoReady(false);
+    setAdsRotation(0);
     setAdsPdfPage(0);
     setAdsPdfPageCount(0);
     await PDFRendererModule?.closeDocument?.().catch(() => {});
@@ -148,13 +159,16 @@ function App() {
     CmsServerModule?.getCmsQrCode?.().then((result) => setCmsQr(result)).catch(() => {});
   }, []);
 
-  // After the first IP-based login, native storage retains that password.
-  // Put it back into the login field on future launches so the user only has
-  // to select Login. Clear Data or uninstall removes this saved value.
+  // First login uses the TV-IP code and saves it in app-private storage. On
+  // every later launch this saved credential unlocks the viewer immediately;
+  // Android Clear Data or uninstall removes it and restores first-login flow.
   useEffect(() => {
     CmsServerModule?.getSavedLoginPassword?.()
       .then((savedPassword) => {
-        if (typeof savedPassword === 'string') setAppPassword(savedPassword);
+        if (typeof savedPassword === 'string' && savedPassword.length) {
+          setAppPassword(savedPassword);
+          setAppAuthenticated(true);
+        }
       })
       .catch(() => {});
   }, []);
@@ -345,8 +359,12 @@ function App() {
     if (!source.length) throw new Error('No supported files were found in the USB Ads folder.');
     const safeIndex = ((index % source.length) + source.length) % source.length;
     const item = source[safeIndex];
+    setAdsCycle((value) => value + 1);
     setAdsIndex(safeIndex);
-    setAdsImage(null);
+    setAdsVideoReady(false);
+    // Do not clear adsImage here. While a PDF is being rendered (or the next
+    // video is buffering), it acts as a stable previous-frame backdrop instead
+    // of exposing a loader/black screen.
     setAdsPdfPage(0);
     setAdsPdfPageCount(0);
     if (item.type === 'pdf') {
@@ -369,6 +387,7 @@ function App() {
     setTimerEnabled(false);
     setAdsAutoSuppressed(false);
     setCleanMode(false);
+    setAdsRotation(0);
     // Ads owns the renderer while playing. Clear the regular viewer state so
     // a stopped USB loop never exposes a stale PDF render underneath it.
     setPdfUri(null);
@@ -427,6 +446,8 @@ function App() {
     await showAd(adsIndex - 1);
   };
 
+  const rotateAds = () => setAdsRotation((value) => (value + 90) % 360);
+
   cmsCommandRef.current = async ({ id, type, payload }) => {
     if (!id) return;
     if (processedCmsCommandIdsRef.current.has(id)) return;
@@ -444,6 +465,10 @@ function App() {
       setAppAuthenticated(true);
       if (type === 'uploadPdf' && data.uri) {
         await appendCmsPdf({ uri: data.uri, name: data.name || fileNameFromUri(data.uri) });
+      } else if (type === 'uploadAds' && data.uri) {
+        // Rescan after every CMS upload. The scanner maintains the intended
+        // source priority: pendrive Ads, public TV Ads, then CMS-saved Ads.
+        await scanUsbAds();
       } else if (type === 'previous') {
         if (!pdfUri) throw new Error('Open a PDF before using Previous.');
         await previousAction();
@@ -477,8 +502,15 @@ function App() {
       } else if (type === 'adsPrevious') {
         if (!adsActive) throw new Error('USB Ads mode is not playing.');
         await previousAd();
+      } else if (type === 'adsRotate') {
+        if (!adsActive) throw new Error('USB Ads mode is not playing.');
+        rotateAds();
       } else if (type === 'adsSeconds') {
         setAdsSeconds(Math.max(1, Math.min(3600, Math.floor(Number(data.seconds)) || 10)));
+      } else if (type === 'clearAds') {
+        if (!FilePickerModule?.clearCmsAds) throw new Error('TV Ads storage is unavailable in this build.');
+        await FilePickerModule.clearCmsAds();
+        await stopAds(false);
       } else {
         throw new Error('This command is unavailable because no PDF is open.');
       }
@@ -534,8 +566,9 @@ function App() {
       adsCount: adsPlaylist.length,
       adsIndex: adsIndex + 1,
       adsSeconds,
+      adsRotation,
     });
-  }, [adsActive, adsIndex, adsPdfPage, adsPdfPageCount, adsPlaylist, adsSeconds, cleanMode, documentIndex, loading, page, pageCount, pdfUri, playlist, rotation, timerEnabled, timerSeconds]);
+  }, [adsActive, adsIndex, adsPdfPage, adsPdfPageCount, adsPlaylist, adsRotation, adsSeconds, cleanMode, documentIndex, loading, page, pageCount, pdfUri, playlist, rotation, timerEnabled, timerSeconds]);
 
   // One timeout per displayed page gives every page its configured duration.
   useEffect(() => {
@@ -553,7 +586,7 @@ function App() {
     if (!adsActive || !item || item.type === 'video' || loading) return undefined;
     const timeout = setTimeout(() => adsNextRef.current?.(), adsSeconds * 1000);
     return () => clearTimeout(timeout);
-  }, [adsActive, adsImage, adsIndex, adsPdfPage, adsPlaylist, adsSeconds, loading]);
+  }, [adsActive, adsCycle, adsImage, adsIndex, adsPdfPage, adsPlaylist, adsSeconds, loading]);
 
   // Fallback for TV launchers that do not send every native onFocus event to JS.
   useEffect(() => {
@@ -646,12 +679,23 @@ function App() {
 
   if (adsActive) {
     const currentAd = adsPlaylist[adsIndex];
+    const adsRotationStyle = adsRotation ? { transform: [{ rotate: `${adsRotation}deg` }] } : null;
     return (
       <View style={styles.adsScreen}>
         {currentAd?.type === 'video' ? (
-          <AdsVideoView style={styles.adsMedia} source={currentAd.uri} muted={false} onAdComplete={() => adsNextRef.current?.()} onAdError={() => adsNextRef.current?.()} />
-        ) : adsImage ? <Image source={{ uri: adsImage }} style={styles.adsMedia} resizeMode="stretch" /> : null}
-        {loading ? <ActivityIndicator size="large" color="#fff" style={styles.loader} /> : null}
+          <>
+            {adsImage ? <Image source={{ uri: adsImage }} style={[styles.adsMedia, styles.adsBackdrop, adsRotationStyle]} resizeMode="stretch" /> : null}
+            <AdsVideoView
+              key={`${currentAd.uri}-${adsCycle}`}
+              style={[styles.adsMedia, styles.adsVideoLayer, adsRotationStyle, !adsVideoReady && styles.adsVideoHidden]}
+              source={currentAd.uri}
+              muted={false}
+              onAdReady={() => setAdsVideoReady(true)}
+              onAdComplete={() => adsNextRef.current?.()}
+              onAdError={() => adsNextRef.current?.()}
+            />
+          </>
+        ) : adsImage ? <Image source={{ uri: adsImage }} style={[styles.adsMedia, adsRotationStyle]} resizeMode="stretch" /> : null}
       </View>
     );
   }
@@ -773,6 +817,9 @@ const styles = StyleSheet.create({
   adsStartButton: { marginTop: 18, backgroundColor: '#00796B' },
   adsScreen: { flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
   adsMedia: { width: '100%', height: '100%' },
+  adsBackdrop: { position: 'absolute', top: 0, left: 0 },
+  adsVideoLayer: { position: 'absolute', top: 0, left: 0 },
+  adsVideoHidden: { opacity: 0 },
   viewerHeader: { flexDirection: 'row', padding: 20, backgroundColor: '#202020', alignItems: 'center' },
   headerText: { flex: 1 },
   filename: { color: '#fff', fontSize: 24, fontWeight: 'bold' },

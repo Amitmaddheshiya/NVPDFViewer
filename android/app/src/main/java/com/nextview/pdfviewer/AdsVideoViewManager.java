@@ -18,6 +18,10 @@ public class AdsVideoViewManager extends SimpleViewManager<AdsVideoView> {
     @ReactProp(name = "muted", defaultBoolean = false) public void setMuted(AdsVideoView view, boolean muted) { view.setMuted(muted); }
     @Override public void onDropViewInstance(@NonNull AdsVideoView view) { view.release(); super.onDropViewInstance(view); }
     @Override public Map getExportedCustomDirectEventTypeConstants() {
-        return MapBuilder.of("onAdComplete", MapBuilder.of("registrationName", "onAdComplete"), "onAdError", MapBuilder.of("registrationName", "onAdError"));
+        return MapBuilder.of(
+            "onAdComplete", MapBuilder.of("registrationName", "onAdComplete"),
+            "onAdError", MapBuilder.of("registrationName", "onAdError"),
+            "onAdReady", MapBuilder.of("registrationName", "onAdReady")
+        );
     }
 }
