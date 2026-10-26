@@ -14,6 +14,8 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  UIManager,
+  findNodeHandle,
   useWindowDimensions,
   View,
   requireNativeComponent,
@@ -67,6 +69,7 @@ function App() {
   const cmsCommandRef = useRef(null);
   const cmsPollBusyRef = useRef(false);
   const adsNextRef = useRef(null);
+  const adsVideoViewRef = useRef(null);
   const startAdsRef = useRef(null);
   // A CMS command is sent through the native event channel immediately and is
   // also left in the native queue as a delivery fallback. Remember its id so
@@ -537,6 +540,30 @@ function App() {
             location.reload();
           }
         }
+      } else if (type === 'adsForward') {
+        if (!adsActive) throw new Error('USB Ads mode is not playing.');
+        if (adsPlaylist[adsIndex]?.type !== 'video') throw new Error('Seek is only available for videos.');
+        if (!adsVideoReady || !adsVideoViewRef.current) throw new Error('Video player not ready. Wait for video to start playing.');
+        const seekMs = Math.max(1000, Math.min(60000, Math.floor(Number(data.seconds) || 10) * 1000));
+        const reactTag = findNodeHandle(adsVideoViewRef.current);
+        if (!reactTag) throw new Error('Video player not ready. Try again.');
+        UIManager.dispatchViewManagerCommand(
+          reactTag,
+          UIManager.getViewManagerConfig('AdsVideoView').Commands.seekForward,
+          [seekMs]
+        );
+      } else if (type === 'adsBackward') {
+        if (!adsActive) throw new Error('USB Ads mode is not playing.');
+        if (adsPlaylist[adsIndex]?.type !== 'video') throw new Error('Seek is only available for videos.');
+        if (!adsVideoReady || !adsVideoViewRef.current) throw new Error('Video player not ready. Wait for video to start playing.');
+        const seekMs = Math.max(1000, Math.min(60000, Math.floor(Number(data.seconds) || 10) * 1000));
+        const reactTag = findNodeHandle(adsVideoViewRef.current);
+        if (!reactTag) throw new Error('Video player not ready. Try again.');
+        UIManager.dispatchViewManagerCommand(
+          reactTag,
+          UIManager.getViewManagerConfig('AdsVideoView').Commands.seekBackward,
+          [seekMs]
+        );
       } else {
         throw new Error('This command is unavailable because no PDF is open.');
       }
@@ -745,6 +772,7 @@ function App() {
             <>
               {adsImage ? <Image source={{ uri: adsImage }} style={[styles.adsMedia, styles.adsBackdrop]} resizeMode="stretch" /> : null}
               <AdsVideoView
+                ref={adsVideoViewRef}
                 key={`${currentAd.uri}-${adsCycle}`}
                 style={[styles.adsMedia, styles.adsVideoLayer, !adsVideoReady && styles.adsVideoHidden]}
                 source={currentAd.uri}

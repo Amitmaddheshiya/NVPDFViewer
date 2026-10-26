@@ -81,6 +81,37 @@ public class AdsVideoView extends FrameLayout {
 
     public void release() { video.stopPlayback(); }
 
+    public void seekTo(int milliseconds) {
+        post(() -> {
+            try {
+                if (video.isPlaying() || video.getCurrentPosition() > 0) {
+                    video.seekTo(milliseconds);
+                }
+            } catch (Exception ignored) { }
+        });
+    }
+
+    public void seekForward(int milliseconds) {
+        post(() -> {
+            try {
+                int current = video.getCurrentPosition();
+                int duration = video.getDuration();
+                int newPosition = Math.min(duration, current + milliseconds);
+                video.seekTo(newPosition);
+            } catch (Exception ignored) { }
+        });
+    }
+
+    public void seekBackward(int milliseconds) {
+        post(() -> {
+            try {
+                int current = video.getCurrentPosition();
+                int newPosition = Math.max(0, current - milliseconds);
+                video.seekTo(newPosition);
+            } catch (Exception ignored) { }
+        });
+    }
+
     private static class StretchVideoView extends VideoView {
         StretchVideoView(Context context) { super(context); }
 

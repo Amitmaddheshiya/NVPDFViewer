@@ -79,6 +79,7 @@ class CmsHttpServer extends NanoHTTPD {
             }
             if ("/api/upload".equals(uri) && Method.POST.equals(session.getMethod())) return cors(upload(session));
             if ("/api/ads-upload".equals(uri) && Method.POST.equals(session.getMethod())) return cors(uploadAds(session));
+            if ("/api/ads-upload-chunk".equals(uri) && Method.POST.equals(session.getMethod())) return cors(uploadAdsChunk(session));
             if ("/api/storage/list".equals(uri) && Method.GET.equals(session.getMethod())) return cors(storageList(session));
             if ("/api/storage/folder".equals(uri) && Method.POST.equals(session.getMethod())) return cors(storageFolder(session));
             if ("/api/storage/file".equals(uri) && Method.POST.equals(session.getMethod())) return cors(storageFile(session));
@@ -94,7 +95,11 @@ class CmsHttpServer extends NanoHTTPD {
 
     private Response upload(IHTTPSession session) throws Exception {
         Map<String, String> files = new HashMap<>();
-        session.parseBody(files);
+        try {
+            session.parseBody(files);
+        } catch (Exception e) {
+            return json(Response.Status.INTERNAL_ERROR, "{\"error\":\"Failed to parse upload: " + escape(e.getMessage()) + "\"}");
+        }
         if (!authorized(session)) return json(Response.Status.UNAUTHORIZED, "{\"error\":\"Please login again\"}");
         String temporaryPath = files.get("file");
         String requestedName = session.getParms().get("filename");
@@ -105,8 +110,12 @@ class CmsHttpServer extends NanoHTTPD {
         File destination = new File(uploadDirectory, UUID.randomUUID() + "-" + safeName);
         // Copy then delete keeps the upload robust even if NanoHTTPD's
         // temporary file lives on a different Android filesystem provider.
-        Files.copy(new File(temporaryPath).toPath(), destination.toPath());
-        Files.deleteIfExists(new File(temporaryPath).toPath());
+        try {
+            Files.copy(new File(temporaryPath).toPath(), destination.toPath());
+            Files.deleteIfExists(new File(temporaryPath).toPath());
+        } catch (Exception e) {
+            return json(Response.Status.INTERNAL_ERROR, "{\"error\":\"Failed to save file: " + escape(e.getMessage()) + "\"}");
+        }
         JSONObject payload = new JSONObject();
         payload.put("uri", Uri.fromFile(destination).toString());
         payload.put("name", safeName);
@@ -119,7 +128,11 @@ class CmsHttpServer extends NanoHTTPD {
 
     private Response uploadAds(IHTTPSession session) throws Exception {
         Map<String, String> files = new HashMap<>();
-        session.parseBody(files);
+        try {
+            session.parseBody(files);
+        } catch (Exception e) {
+            return json(Response.Status.INTERNAL_ERROR, "{\"error\":\"Failed to parse upload: " + escape(e.getMessage()) + "\"}");
+        }
         if (!authorized(session)) return json(Response.Status.UNAUTHORIZED, "{\"error\":\"Please login again\"}");
         String temporaryPath = files.get("file");
         String requestedName = session.getParms().get("filename");
@@ -136,8 +149,12 @@ class CmsHttpServer extends NanoHTTPD {
         File destination = new File(directory, "cms-" + UUID.randomUUID() + "-" + safeName);
         // The temporary upload lives in app-private storage while this target
         // is public TV main storage, so use cross-filesystem-safe copy/delete.
-        Files.copy(new File(temporaryPath).toPath(), destination.toPath());
-        Files.deleteIfExists(new File(temporaryPath).toPath());
+        try {
+            Files.copy(new File(temporaryPath).toPath(), destination.toPath());
+            Files.deleteIfExists(new File(temporaryPath).toPath());
+        } catch (Exception e) {
+            return json(Response.Status.INTERNAL_ERROR, "{\"error\":\"Failed to save file: " + escape(e.getMessage()) + "\"}");
+        }
         JSONObject payload = new JSONObject();
         payload.put("uri", Uri.fromFile(destination).toString());
         payload.put("name", safeName);
@@ -156,6 +173,84 @@ class CmsHttpServer extends NanoHTTPD {
                 || lower.endsWith(".m4v") || lower.endsWith(".webm") || lower.endsWith(".3gp")
                 || lower.endsWith(".mkv") || lower.endsWith(".avi") || lower.endsWith(".mov")
                 || lower.endsWith(".mpeg") || lower.endsWith(".ts");
+    }
+
+    private Response uploadAdsChunk(IHTTPSession session) throws Exception {
+        Map<String, String> files = new HashMap<>();
+        try {
+            session.parseBody(files);
+        } catch (Exception e) {
+            return json(Response.Status.INTERNAL_ERROR, "{\"error\":\"Failed to parse upload: " + escape(e.getMessage()) + "\"}");
+        }
+        if (!authorized(session)) return json(Response.Status.UNAUTHORIZED, "{\"error\":\"Please login again\"}");
+        String temporaryPath = files.get("file");
+        String uploadId = session.getParms().get("uploadId");
+        String chunkIndexStr = session.getParms().get("chunkIndex");
+        String totalChunksStr = session.getParms().get("totalChunks");
+        String requestedName = session.getParms().get("filename");
+        String fileSizeStr = session.getParms().get("fileSize");
+
+        if (temporaryPath == null || uploadId == null || chunkIndexStr == null || totalChunksStr == null || requestedName == null || fileSizeStr == null) {
+            return json(Response.Status.BAD_REQUEST, "{\"error\":\"Missing chunk upload parameters\"}");
+        }
+
+        int chunkIndex = Integer.parseInt(chunkIndexStr);
+        int totalChunks = Integer.parseInt(totalChunksStr);
+        long fileSize = Long.parseLong(fileSizeStr);
+
+        File chunksDir = new File(context.getCacheDir(), "upload-chunks-" + uploadId);
+        if (!chunksDir.exists()) chunksDir.mkdirs();
+
+        File chunkFile = new File(chunksDir, chunkIndex + ".chunk");
+        try {
+            Files.copy(new File(temporaryPath).toPath(), chunkFile.toPath());
+            Files.deleteIfExists(new File(temporaryPath).toPath());
+        } catch (Exception e) {
+            return json(Response.Status.INTERNAL_ERROR, "{\"error\":\"Failed to save chunk: " + escape(e.getMessage()) + "\"}");
+        }
+
+        // Check if all chunks are received
+        File[] chunkFiles = chunksDir.listFiles();
+        if (chunkFiles != null && chunkFiles.length == totalChunks) {
+            // Assemble file
+            File directory = publicAdsDirectory();
+            if (!directory.exists() && !directory.mkdirs()) {
+                return json(Response.Status.INTERNAL_ERROR, "{\"error\":\"Could not create TV Ads storage\"}");
+            }
+            String safeName = requestedName.replaceAll("[^a-zA-Z0-9._ -]", "_");
+            File destination = new File(directory, "cms-" + UUID.randomUUID() + "-" + safeName);
+
+            try {
+                java.io.FileOutputStream outputStream = new java.io.FileOutputStream(destination);
+                for (int i = 0; i < totalChunks; i++) {
+                    File chunk = new File(chunksDir, i + ".chunk");
+                    if (!chunk.exists()) throw new IOException("Chunk " + i + " missing");
+                    java.io.FileInputStream inputStream = new java.io.FileInputStream(chunk);
+                    byte[] buffer = new byte[8192];
+                    int bytesRead;
+                    while ((bytesRead = inputStream.read(buffer)) != -1) {
+                        outputStream.write(buffer, 0, bytesRead);
+                    }
+                    inputStream.close();
+                    chunk.delete();
+                }
+                outputStream.close();
+                chunksDir.delete();
+            } catch (Exception e) {
+                return json(Response.Status.INTERNAL_ERROR, "{\"error\":\"Failed to assemble file: " + escape(e.getMessage()) + "\"}");
+            }
+
+            JSONObject payload = new JSONObject();
+            payload.put("uri", Uri.fromFile(destination).toString());
+            payload.put("name", safeName);
+            JSONObject event = new JSONObject();
+            event.put("id", UUID.randomUUID().toString());
+            event.put("type", "uploadAds");
+            event.put("payload", payload);
+            return dispatch(event, 15, "{\"name\":\"" + escape(safeName) + "\"}");
+        }
+
+        return json(Response.Status.OK, "{\"ok\":true,\"chunkReceived\":" + chunkIndex + ",\"totalChunks\":" + totalChunks + "}");
     }
 
     private File publicAdsDirectory() throws IOException {
@@ -271,16 +366,24 @@ class CmsHttpServer extends NanoHTTPD {
 
     private Response storageUpload(IHTTPSession session) throws Exception {
         Map<String, String> files = new HashMap<>();
-        session.parseBody(files);
+        try {
+            session.parseBody(files);
+        } catch (Exception e) {
+            return json(Response.Status.INTERNAL_ERROR, "{\"error\":\"Failed to parse upload: " + escape(e.getMessage()) + "\"}");
+        }
         if (!authorized(session)) return json(Response.Status.UNAUTHORIZED, "{\"error\":\"Please login again\"}");
         String temporaryPath = files.get("file");
         String requestedName = session.getParms().get("filename");
         File directory = storagePath(session.getParms().get("path"), true);
-        if (temporaryPath == null || !directory.isDirectory()) throw new IOException("Choose an existing destination folder and file.");
+        if (temporaryPath == null || !directory.isDirectory()) return json(Response.Status.BAD_REQUEST, "{\"error\":\"Choose an existing destination folder and file.\"}");
         File destination = new File(directory, safeStorageName(requestedName));
-        if (destination.exists()) throw new IOException("A file or folder with that name already exists.");
-        Files.copy(new File(temporaryPath).toPath(), destination.toPath());
-        Files.deleteIfExists(new File(temporaryPath).toPath());
+        if (destination.exists()) return json(Response.Status.BAD_REQUEST, "{\"error\":\"A file or folder with that name already exists.\"}");
+        try {
+            Files.copy(new File(temporaryPath).toPath(), destination.toPath());
+            Files.deleteIfExists(new File(temporaryPath).toPath());
+        } catch (Exception e) {
+            return json(Response.Status.INTERNAL_ERROR, "{\"error\":\"Failed to save file: " + escape(e.getMessage()) + "\"}");
+        }
         notifyAdsStorageChange(destination);
         return json(Response.Status.OK, "{\"ok\":true,\"path\":\"" + escape(storageRelativePath(destination)) + "\"}");
     }
@@ -354,7 +457,7 @@ class CmsHttpServer extends NanoHTTPD {
         JSONObject body = new JSONObject(files.getOrDefault("postData", "{}"));
         if (!authorized(session)) return json(Response.Status.UNAUTHORIZED, "{\"error\":\"Please login again\"}");
         String type = body.optString("type");
-        if (!type.matches("previous|next|rotate|fullscreen|close|timer|timerSeconds|clearLibrary|openPdf|adsScan|adsStart|adsStop|adsNext|adsPrevious|adsRotate|adsSeconds|clearAds|reloadApp")) {
+        if (!type.matches("previous|next|rotate|fullscreen|close|timer|timerSeconds|clearLibrary|openPdf|adsScan|adsStart|adsStop|adsNext|adsPrevious|adsRotate|adsSeconds|clearAds|reloadApp|adsForward|adsBackward")) {
             return json(Response.Status.BAD_REQUEST, "{\"error\":\"Unsupported command\"}");
         }
         JSONObject event = new JSONObject();
