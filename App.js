@@ -784,6 +784,7 @@ function App() {
               />
             </>
           ) : adsImage ? <Image source={{ uri: adsImage }} style={styles.adsMedia} resizeMode="stretch" /> : null}
+          {cmsQr ? <Text style={styles.ipOverlay}>{cmsQr.url}</Text> : null}
         </View>
       </View>
     );
@@ -819,6 +820,7 @@ function App() {
           accessibilityLabel="Show PDF controls">
           {pageImage ? <Image source={{ uri: pageImage }} style={styles.pdfImage} resizeMode="stretch" /> : null}
           {loading ? <ActivityIndicator size="large" color="#fff" style={styles.loader} /> : null}
+          {cmsQr ? <Text style={styles.ipOverlay}>{cmsQr.url}</Text> : null}
         </TouchableOpacity>
       );
     }
@@ -836,6 +838,7 @@ function App() {
         <View style={styles.viewer}>
           {pageImage && !loading ? <Image source={{ uri: pageImage }} style={styles.pdfImage} resizeMode="stretch" /> : null}
           {loading ? <ActivityIndicator size="large" color="#fff" style={styles.loader} /> : null}
+          {cmsQr ? <Text style={styles.ipOverlay}>{cmsQr.url}</Text> : null}
         </View>
         <View style={styles.controlPanel}>
           <Text style={styles.focusHint}>Remote focus: {focusedControl ? focusedControl.toUpperCase() : 'CONTROLS'}</Text>
@@ -931,6 +934,7 @@ const styles = StyleSheet.create({
   adsStartButton: { marginTop: 18, backgroundColor: '#00796B' },
   adsStartButtonLandscape: { marginTop: 0 },
   adsScreen: { flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
+  ipOverlay: { position: 'absolute', bottom: 10, right: 10, color: 'rgba(255,255,255,0.3)', fontSize: 12, fontWeight: '400' },
   emptyAdsContainer: { alignItems: 'center', justifyContent: 'center', padding: 40, maxWidth: 700 },
   emptyAdsTitle: { color: '#fff', fontSize: 42, fontWeight: 'bold', marginBottom: 20, textAlign: 'center' },
   emptyAdsText: { color: '#ccc', fontSize: 22, marginBottom: 25, textAlign: 'center' },
