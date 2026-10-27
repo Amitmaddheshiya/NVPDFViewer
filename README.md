@@ -17,6 +17,8 @@ Android TV / Google TV app for displaying PDFs and USB advertising media, with a
 - Local CMS: PDF upload, viewer controls, timer controls, USB Ads controls, current playback status, and dark/light theme.
 - Password-protected CMS sessions and app login using the TV's IP-based login code.
 - TV stays awake while the viewer is open.
+- Remote control support for Ads mode: DOWN button rotates content, LEFT/RIGHT buttons seek videos by 10 seconds.
+- Video rotation support using ExoPlayer with TextureView for proper content rotation.
 
 ## 3. How it works
 

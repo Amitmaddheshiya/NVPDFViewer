@@ -675,6 +675,38 @@ function App() {
     return () => subscription.remove();
   }, [adsActive, appAuthenticated, pdfUri]);
 
+  // Remote control for Ads mode: DOWN button rotates, LEFT/RIGHT seek video
+  useEffect(() => {
+    if (!adsActive) return undefined;
+    const subscription = DeviceEventEmitter.addListener('onHWKeyEvent', (event) => {
+      if (Number(event?.eventKeyAction) !== 0) return;
+      const eventType = event?.eventType;
+
+      if (eventType === 'down') {
+        setAdsRotation((current) => (current + 90) % 360);
+      } else if (eventType === 'left') {
+        const reactTag = findNodeHandle(adsVideoViewRef.current);
+        if (reactTag) {
+          UIManager.dispatchViewManagerCommand(
+            reactTag,
+            2, // COMMAND_SEEK_BACKWARD from AdsVideoViewManager
+            [10000]
+          );
+        }
+      } else if (eventType === 'right') {
+        const reactTag = findNodeHandle(adsVideoViewRef.current);
+        if (reactTag) {
+          UIManager.dispatchViewManagerCommand(
+            reactTag,
+            1, // COMMAND_SEEK_FORWARD from AdsVideoViewManager
+            [10000]
+          );
+        }
+      }
+    });
+    return () => subscription.remove();
+  }, [adsActive]);
+
   const stopTimerForManualAction = (action) => {
     setTimerEnabled(false);
     return action();

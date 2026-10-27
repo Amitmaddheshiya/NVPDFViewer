@@ -1,8 +1,10 @@
 package com.nextview.pdfviewer;
 
 import android.os.Bundle;
+import android.view.KeyEvent;
 import android.view.WindowManager;
 import com.facebook.react.ReactActivity;
+import com.facebook.react.ReactInstanceManager;
 
 public class MainActivity extends ReactActivity {
 
@@ -16,5 +18,15 @@ public class MainActivity extends ReactActivity {
   @Override
   protected String getMainComponentName() {
     return "NVPDFViewer";
+  }
+
+  @Override
+  public boolean onKeyDown(int keyCode, KeyEvent event) {
+    // Emit hardware key events to React Native
+    HardwareKeyModule hardwareKeyModule = HardwareKeyModule.getInstance();
+    if (hardwareKeyModule != null) {
+      hardwareKeyModule.emitKeyEvent(keyCode, event.getAction());
+    }
+    return super.onKeyDown(keyCode, event);
   }
 }
