@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <com.google.android.exoplayer2.ui.StyledPlayerView
+        android:id="@+id/ads_video_player_surface"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        app:resize_mode="fill"
+        app:shutter_background_color="@android:color/black"
+        app:show_buffering="never"
+        app:surface_type="texture_view"
+        app:use_controller="false"
+        xmlns:app="http://schemas.android.com/apk/res-auto" />
+
+</FrameLayout>

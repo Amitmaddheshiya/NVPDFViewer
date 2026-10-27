@@ -777,7 +777,6 @@ function App() {
                 style={[styles.adsMedia, styles.adsVideoLayer, !adsVideoReady && styles.adsVideoHidden]}
                 source={currentAd.uri}
                 muted={false}
-                rotation={adsRotation}
                 onAdReady={() => setAdsVideoReady(true)}
                 onAdComplete={() => adsNextRef.current?.()}
                 onAdError={() => adsNextRef.current?.()}

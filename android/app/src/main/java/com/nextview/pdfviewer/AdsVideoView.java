@@ -1,127 +1,159 @@
 package com.nextview.pdfviewer;
 
 import android.content.Context;
-import android.media.MediaPlayer;
 import android.net.Uri;
-import android.view.Gravity;
+import android.os.Handler;
+import android.os.Looper;
+import android.view.LayoutInflater;
+import android.view.ViewGroup;
 import android.widget.FrameLayout;
-import android.widget.VideoView;
+
+import androidx.annotation.NonNull;
 
 import com.facebook.react.bridge.ReactContext;
 import com.facebook.react.uimanager.events.RCTEventEmitter;
+import com.google.android.exoplayer2.ExoPlayer;
+import com.google.android.exoplayer2.MediaItem;
+import com.google.android.exoplayer2.PlaybackException;
+import com.google.android.exoplayer2.Player;
+import com.google.android.exoplayer2.ui.StyledPlayerView;
 
 /** Small native player used by USB Ads mode. Video completion is reported to
- * JS so the common ad playlist can advance to its next item. */
+ * JS so the common ad playlist can advance to its next item. Uses ExoPlayer
+ * StyledPlayerView with TextureView. Rotation is handled by React Native stage. */
 public class AdsVideoView extends FrameLayout {
-    private final VideoView video;
+    private final StyledPlayerView playerView;
+    private ExoPlayer player;
     private String source;
-    private boolean muted;
-    private int rotation = 0;
+    private boolean muted = false;
+    private final Handler progressHandler = new Handler(Looper.getMainLooper());
+    private boolean attached = false;
 
     public AdsVideoView(ReactContext context) {
         super(context);
-        // The React layer keeps the previous ad behind this view until this
-        // player is prepared, so this container must stay transparent.
-        setBackgroundColor(0x00000000);
-        // Android's stock VideoView may preserve the source aspect ratio and
-        // leave bars. Ads mode is explicitly full-screen stretch, including
-        // after a 90/270-degree stage rotation.
-        video = new StretchVideoView(context);
-        addView(video, new FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT, Gravity.CENTER));
-        video.setOnCompletionListener(player -> emit("onAdComplete"));
-        video.setOnErrorListener((player, what, extra) -> { emit("onAdError"); return true; });
-        video.setOnPreparedListener(player -> {
-            player.setVolume(muted ? 0f : 1f, muted ? 0f : 1f);
-            player.start();
-            emit("onAdReady");
-        });
+        this.setBackgroundColor(0x00000000);
+        LayoutInflater.from(context).inflate(R.layout.ads_video_view, this, true);
+        this.playerView = findViewById(R.id.ads_video_player_surface);
+        this.playerView.setLayoutParams(new LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        ));
+        this.playerView.setKeepScreenOn(true);
+        this.playerView.setKeepContentOnPlayerReset(false);
+        this.playerView.setUseController(false);
     }
 
-    public void setSource(String value) {
-        if (value == null || value.equals(source)) return;
-        source = value;
-        try {
-            video.setVideoURI(Uri.parse(value));
-            video.start();
-        } catch (Exception error) { emit("onAdError"); }
-    }
+    private void ensurePlayer() {
+        if (player != null) return;
 
-    public void setMuted(boolean muted) {
-        this.muted = muted;
-    }
+        player = new ExoPlayer.Builder(getContext()).build();
+        playerView.setPlayer(player);
+        player.setVolume(muted ? 0f : 1f);
+        player.setRepeatMode(Player.REPEAT_MODE_OFF);
+        player.addListener(new Player.Listener() {
+            @Override
+            public void onPlaybackStateChanged(int playbackState) {
+                if (playbackState == Player.STATE_READY) {
+                    emit("onAdReady");
+                }
+                if (playbackState == Player.STATE_ENDED) {
+                    emit("onAdComplete");
+                }
+            }
 
-    public void setRotation(int rotation) {
-        this.rotation = rotation;
-        video.setRotation(rotation);
-        // For 90/270 degree rotations, we need to adjust the VideoView dimensions
-        // to match the rotated layout. The parent container handles the stage rotation.
-        post(() -> {
-            if (rotation == 90 || rotation == 270) {
-                // Swap dimensions for quarter turns
-                int width = getWidth();
-                int height = getHeight();
-                FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) video.getLayoutParams();
-                params.width = height;
-                params.height = width;
-                video.setLayoutParams(params);
-                // Set pivot to center
-                video.setPivotX(height / 2f);
-                video.setPivotY(width / 2f);
-            } else {
-                // Reset dimensions for 0/180 degree rotations
-                FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) video.getLayoutParams();
-                params.width = LayoutParams.MATCH_PARENT;
-                params.height = LayoutParams.MATCH_PARENT;
-                video.setLayoutParams(params);
-                video.setPivotX(getWidth() / 2f);
-                video.setPivotY(getHeight() / 2f);
+            @Override
+            public void onPlayerError(@NonNull PlaybackException error) {
+                emit("onAdError");
             }
         });
     }
 
-    public void release() { video.stopPlayback(); }
+    public void setSource(String value) {
+        if (value == null || value.equals(source)) {
+            if (player != null && !source.isEmpty()) {
+                try {
+                    player.setPlayWhenReady(true);
+                    player.play();
+                } catch (Exception ignored) {}
+            }
+            return;
+        }
+        source = value;
+        prepareIfPossible();
+    }
+
+    public void setMuted(boolean muted) {
+        this.muted = muted;
+        if (player != null) {
+            player.setVolume(muted ? 0f : 1f);
+        }
+    }
+
+    private void prepareIfPossible() {
+        if (!attached || source.isEmpty()) return;
+        ensurePlayer();
+        if (player != null) {
+            MediaItem mediaItem = MediaItem.fromUri(Uri.parse(source));
+            player.setMediaItem(mediaItem);
+            player.prepare();
+            player.setPlayWhenReady(true);
+            player.play();
+        }
+    }
+
+    public void release() {
+        if (player != null) {
+            player.release();
+            player = null;
+        }
+        source = "";
+    }
 
     public void seekTo(int milliseconds) {
-        post(() -> {
+        if (player != null) {
             try {
-                if (video.isPlaying() || video.getCurrentPosition() > 0) {
-                    video.seekTo(milliseconds);
-                }
-            } catch (Exception ignored) { }
-        });
+                player.seekTo(milliseconds);
+            } catch (Exception ignored) {}
+        }
     }
 
     public void seekForward(int milliseconds) {
-        post(() -> {
+        if (player != null) {
             try {
-                int current = video.getCurrentPosition();
-                int duration = video.getDuration();
-                int newPosition = Math.min(duration, current + milliseconds);
-                video.seekTo(newPosition);
-            } catch (Exception ignored) { }
-        });
+                long current = player.getCurrentPosition();
+                long duration = player.getDuration();
+                long newPosition = Math.min(duration, current + milliseconds);
+                player.seekTo(newPosition);
+            } catch (Exception ignored) {}
+        }
     }
 
     public void seekBackward(int milliseconds) {
-        post(() -> {
+        if (player != null) {
             try {
-                int current = video.getCurrentPosition();
-                int newPosition = Math.max(0, current - milliseconds);
-                video.seekTo(newPosition);
-            } catch (Exception ignored) { }
-        });
+                long current = player.getCurrentPosition();
+                long newPosition = Math.max(0, current - milliseconds);
+                player.seekTo(newPosition);
+            } catch (Exception ignored) {}
+        }
     }
 
-    private static class StretchVideoView extends VideoView {
-        StretchVideoView(Context context) { super(context); }
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        attached = true;
+        prepareIfPossible();
+    }
 
-        @Override
-        protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-            setMeasuredDimension(
-                    MeasureSpec.getSize(widthMeasureSpec),
-                    MeasureSpec.getSize(heightMeasureSpec)
-            );
+    @Override
+    protected void onDetachedFromWindow() {
+        attached = false;
+        if (player != null) {
+            try {
+                player.pause();
+            } catch (Exception ignored) {}
         }
+        super.onDetachedFromWindow();
     }
 
     private void emit(String event) {
